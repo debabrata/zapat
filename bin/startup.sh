@@ -130,7 +130,7 @@ fi
 echo "[4b/7] Cleaning up orphaned worktrees..."
 WORKTREE_CLEANED=0
 if [[ -d ${ZAPAT_HOME:-$HOME/.zapat}/worktrees ]]; then
-    for wt in ${ZAPAT_HOME:-$HOME/.zapat}/worktrees/*/; do
+    for wt in "${ZAPAT_HOME:-$HOME/.zapat}"/worktrees/*/; do
         [[ -d "$wt" ]] || continue
         rm -rf "$wt"
         WORKTREE_CLEANED=$((WORKTREE_CLEANED + 1))
