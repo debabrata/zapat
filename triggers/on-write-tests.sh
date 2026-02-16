@@ -90,7 +90,7 @@ git fetch origin main 2>/dev/null || git fetch origin master 2>/dev/null || true
 DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')
 DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 
-mkdir -p ${ZAPAT_HOME:-$HOME/.zapat}/worktrees
+mkdir -p "${ZAPAT_HOME:-$HOME/.zapat}"/worktrees
 git worktree add "$WORKTREE_DIR" -b "$BRANCH_NAME" "origin/${DEFAULT_BRANCH}" 2>/dev/null || {
     # Branch may already exist from a previous attempt
     log_warn "Branch $BRANCH_NAME may already exist, trying checkout"

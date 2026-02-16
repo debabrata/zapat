@@ -109,7 +109,7 @@ if [[ -z "${BASE_BRANCH:-}" ]]; then
     BASE_BRANCH="${BASE_BRANCH:-main}"
 fi
 
-mkdir -p ${ZAPAT_HOME:-$HOME/.zapat}/worktrees
+mkdir -p "${ZAPAT_HOME:-$HOME/.zapat}"/worktrees
 git worktree add "$WORKTREE_DIR" -b "$BRANCH_NAME" "origin/${BASE_BRANCH}" 2>/dev/null || {
     # Branch may already exist from a previous attempt — delete and recreate
     log_warn "Branch $BRANCH_NAME may already exist, resetting it"

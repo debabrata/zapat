@@ -111,7 +111,7 @@ fi
 cd "$REPO_PATH"
 git fetch origin "$PR_BRANCH" 2>/dev/null || true
 
-mkdir -p ${ZAPAT_HOME:-$HOME/.zapat}/worktrees
+mkdir -p "${ZAPAT_HOME:-$HOME/.zapat}"/worktrees
 git worktree add "$WORKTREE_DIR" "origin/${PR_BRANCH}" 2>/dev/null || {
     # Try with local branch
     git worktree add "$WORKTREE_DIR" "$PR_BRANCH" 2>/dev/null || {

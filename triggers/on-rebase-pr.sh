@@ -77,7 +77,7 @@ git fetch origin "$PR_BRANCH" "$BASE_BRANCH" 2>/dev/null || {
     exit 1
 }
 
-mkdir -p ${ZAPAT_HOME:-$HOME/.zapat}/worktrees
+mkdir -p "${ZAPAT_HOME:-$HOME/.zapat}"/worktrees
 git worktree add "$WORKTREE_DIR" "origin/${PR_BRANCH}" 2>/dev/null || {
     git worktree add "$WORKTREE_DIR" "$PR_BRANCH" 2>/dev/null || {
         log_error "Failed to create worktree for branch $PR_BRANCH"
