@@ -29,7 +29,7 @@
   },
   "scripts": {
     "start": "node bin/zapat",
-    "test": "node tests/check-consistency.mjs && npm run test:lint",
+    "test": "node tests/check-consistency.mjs && node tests/check-docs.mjs && npm run test:lint",
     "test:lint": "shellcheck bin/*.sh triggers/*.sh lib/*.sh jobs/*.sh 2>/dev/null || echo 'shellcheck not installed — skipping'"
   },
   "dependencies": {
