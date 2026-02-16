@@ -245,6 +245,13 @@ scan_mentions() {
         log_info "@zapat mention by $comment_login on #${item_number} in ${repo}: $mention_text"
 
         # Route to appropriate trigger (pass project_slug from outer loop via CURRENT_PROJECT)
+        # Check dispatch cap (DISPATCH_COUNT/MAX_DISPATCH are global, set in main loop)
+        # Do NOT mark as processed here — mention will be retried next cycle
+        if [[ ${DISPATCH_COUNT:-0} -ge ${MAX_DISPATCH:-20} ]]; then
+            log_warn "Per-cycle dispatch limit reached — deferring mention on #${item_number}"
+            continue
+        fi
+
         local cur_project="${CURRENT_PROJECT:-default}"
         if [[ "$is_pr" == "true" ]]; then
             "$SCRIPT_DIR/triggers/on-new-pr.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
@@ -262,6 +269,7 @@ scan_mentions() {
             fi
             TOTAL_ISSUES=$((TOTAL_ISSUES + 1))
         fi
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
 
         echo "$comment_id" >> "$PROCESSED_MENTIONS"
     done
@@ -270,6 +278,21 @@ scan_mentions() {
 # --- Process Repos (per project) ---
 TOTAL_PRS=0
 TOTAL_ISSUES=0
+DISPATCH_COUNT=0
+MAX_DISPATCH=${MAX_DISPATCH_PER_CYCLE:-20}
+
+# Check if we've hit the per-cycle dispatch cap
+DISPATCH_LIMIT_LOGGED=false
+dispatch_limit_reached() {
+    if [[ $DISPATCH_COUNT -ge $MAX_DISPATCH ]]; then
+        if [[ "$DISPATCH_LIMIT_LOGGED" != "true" ]]; then
+            log_warn "Per-cycle dispatch limit reached ($DISPATCH_COUNT/$MAX_DISPATCH). Remaining items deferred to next cycle."
+            DISPATCH_LIMIT_LOGGED=true
+        fi
+        return 0
+    fi
+    return 1
+}
 
 while IFS= read -r project_slug; do
     [[ -z "$project_slug" ]] && continue
@@ -315,11 +338,13 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        dispatch_limit_reached && continue
         log_info "Processing PR: $PR_KEY — $PR_TITLE (project: $project_slug)"
         create_item_state "$repo" "pr" "$PR_NUM" "pending" "$project_slug" || true
         "$SCRIPT_DIR/triggers/on-new-pr.sh" "$repo" "$PR_NUM" "" "$project_slug" &
         echo "$PR_KEY" >> "$PROCESSED_PRS"
         TOTAL_PRS=$((TOTAL_PRS + 1))
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
     # --- PRs with zapat-review label (agent-created PRs needing review) ---
@@ -348,11 +373,13 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        dispatch_limit_reached && continue
         log_info "Processing zapat-review: $REVIEW_KEY — $REVIEW_TITLE (project: $project_slug)"
         create_item_state "$repo" "pr" "$REVIEW_NUM" "pending" "$project_slug" || true
         "$SCRIPT_DIR/triggers/on-new-pr.sh" "$repo" "$REVIEW_NUM" "" "$project_slug" &
         echo "$REVIEW_KEY" >> "$PROCESSED_PRS"
         TOTAL_PRS=$((TOTAL_PRS + 1))
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
     # --- Issues with agent label ---
@@ -381,11 +408,13 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        dispatch_limit_reached && continue
         log_info "Processing issue: $ISSUE_KEY — $ISSUE_TITLE (project: $project_slug)"
         create_item_state "$repo" "issue" "$ISSUE_NUM" "pending" "$project_slug" || true
         "$SCRIPT_DIR/triggers/on-new-issue.sh" "$repo" "$ISSUE_NUM" "" "$project_slug" &
         echo "$ISSUE_KEY" >> "$PROCESSED_ISSUES"
         TOTAL_ISSUES=$((TOTAL_ISSUES + 1))
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
     # --- Issues with agent-work label (implementation) ---
@@ -420,11 +449,13 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        dispatch_limit_reached && continue
         log_info "Processing agent-work: $WORK_KEY — $WORK_TITLE (project: $project_slug)"
         create_item_state "$repo" "work" "$WORK_NUM" "pending" "$project_slug" || true
         "$SCRIPT_DIR/triggers/on-work-issue.sh" "$repo" "$WORK_NUM" "" "$project_slug" &
         echo "$WORK_KEY" >> "$PROCESSED_WORK"
         TOTAL_ISSUES=$((TOTAL_ISSUES + 1))
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
     # --- PRs with zapat-rework label (change requests) ---
@@ -453,11 +484,13 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        dispatch_limit_reached && continue
         log_info "Processing zapat-rework: $REWORK_KEY — $REWORK_TITLE (project: $project_slug)"
         create_item_state "$repo" "rework" "$REWORK_NUM" "pending" "$project_slug" || true
         "$SCRIPT_DIR/triggers/on-rework-pr.sh" "$repo" "$REWORK_NUM" "" "$project_slug" &
         echo "$REWORK_KEY" >> "$PROCESSED_REWORK"
         TOTAL_PRS=$((TOTAL_PRS + 1))
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
     # --- PRs with zapat-testing label (test runner) ---
@@ -480,10 +513,12 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        dispatch_limit_reached && continue
         log_info "Processing zapat-testing: $TEST_KEY — $TEST_TITLE (project: $project_slug)"
         create_item_state "$repo" "test" "$TEST_NUM" "pending" "$project_slug" >/dev/null || true
         "$SCRIPT_DIR/triggers/on-test-pr.sh" "$repo" "$TEST_NUM" "" "$project_slug" &
         TOTAL_PRS=$((TOTAL_PRS + 1))
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
     # --- Issues with agent-write-tests label (test writing) ---
@@ -512,11 +547,13 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        dispatch_limit_reached && continue
         log_info "Processing agent-write-tests: $WT_KEY — $WT_TITLE (project: $project_slug)"
         create_item_state "$repo" "write-tests" "$WT_NUM" "pending" "$project_slug" || true
         "$SCRIPT_DIR/triggers/on-write-tests.sh" "$repo" "$WT_NUM" "" "$project_slug" &
         echo "$WT_KEY" >> "$PROCESSED_WRITE_TESTS"
         TOTAL_ISSUES=$((TOTAL_ISSUES + 1))
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
     # --- Issues with agent-research label (strategy/research) ---
@@ -545,11 +582,13 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        dispatch_limit_reached && continue
         log_info "Processing agent-research: $RESEARCH_KEY — $RESEARCH_TITLE (project: $project_slug)"
         create_item_state "$repo" "research" "$RESEARCH_NUM" "pending" "$project_slug" || true
         "$SCRIPT_DIR/triggers/on-research-issue.sh" "$repo" "$RESEARCH_NUM" "" "$project_slug" &
         echo "$RESEARCH_KEY" >> "$PROCESSED_RESEARCH"
         TOTAL_ISSUES=$((TOTAL_ISSUES + 1))
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
     # --- @zapat Mention Scanning ---
@@ -603,11 +642,13 @@ while IFS=$'\t' read -r repo local_path repo_type; do
                 continue
             fi
 
+            dispatch_limit_reached && continue
             log_info "Auto-triage: new issue $AT_KEY — $AT_TITLE (project: $project_slug)"
             create_item_state "$repo" "issue" "$AT_NUM" "pending" "$project_slug" || true
             "$SCRIPT_DIR/triggers/on-new-issue.sh" "$repo" "$AT_NUM" "" "$project_slug" &
             echo "$AT_KEY" >> "$PROCESSED_AUTO_TRIAGE"
             TOTAL_ISSUES=$((TOTAL_ISSUES + 1))
+            DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
         done
     fi
 
