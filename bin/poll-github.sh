@@ -246,9 +246,9 @@ scan_mentions() {
 
         # Route to appropriate trigger (pass project_slug from outer loop via CURRENT_PROJECT)
         # Check dispatch cap (DISPATCH_COUNT/MAX_DISPATCH are global, set in main loop)
+        # Do NOT mark as processed here — mention will be retried next cycle
         if [[ ${DISPATCH_COUNT:-0} -ge ${MAX_DISPATCH:-20} ]]; then
             log_warn "Per-cycle dispatch limit reached — deferring mention on #${item_number}"
-            echo "$comment_id" >> "$PROCESSED_MENTIONS"
             continue
         fi
 
@@ -282,9 +282,13 @@ DISPATCH_COUNT=0
 MAX_DISPATCH=${MAX_DISPATCH_PER_CYCLE:-20}
 
 # Check if we've hit the per-cycle dispatch cap
+DISPATCH_LIMIT_LOGGED=false
 dispatch_limit_reached() {
     if [[ $DISPATCH_COUNT -ge $MAX_DISPATCH ]]; then
-        log_warn "Per-cycle dispatch limit reached ($DISPATCH_COUNT/$MAX_DISPATCH). Remaining items deferred to next cycle."
+        if [[ "$DISPATCH_LIMIT_LOGGED" != "true" ]]; then
+            log_warn "Per-cycle dispatch limit reached ($DISPATCH_COUNT/$MAX_DISPATCH). Remaining items deferred to next cycle."
+            DISPATCH_LIMIT_LOGGED=true
+        fi
         return 0
     fi
     return 1

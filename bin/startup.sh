@@ -301,7 +301,11 @@ if [[ ! -s "$SCRIPT_DIR/state/processed-prs.txt" ]]; then
         done < <(read_repos "$proj")
     done < <(read_projects)
     sort -u -o "$SCRIPT_DIR/state/processed-prs.txt" "$SCRIPT_DIR/state/processed-prs.txt" 2>/dev/null || true
-    log_info "Seeded $PR_SEED_COUNT existing PRs across all repos"
+    if [[ $PR_SEED_COUNT -eq 0 ]]; then
+        log_warn "No PRs seeded — check gh CLI auth if repos have open PRs"
+    else
+        log_info "Seeded $PR_SEED_COUNT existing PRs across all repos"
+    fi
 fi
 
 # --- Notify ---
