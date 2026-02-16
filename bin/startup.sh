@@ -278,7 +278,11 @@ if [[ ! -s "$SCRIPT_DIR/state/processed-issues.txt" ]]; then
     for f in processed-issues.txt processed-auto-triage.txt processed-work.txt processed-research.txt processed-write-tests.txt; do
         sort -u -o "$SCRIPT_DIR/state/$f" "$SCRIPT_DIR/state/$f" 2>/dev/null || true
     done
-    log_info "Seeded $SEED_COUNT existing issues across all repos"
+    if [[ $SEED_COUNT -eq 0 ]]; then
+        log_warn "No issues seeded — check gh CLI auth if repos have open issues"
+    else
+        log_info "Seeded $SEED_COUNT existing issues across all repos"
+    fi
 fi
 
 # Same for PRs

@@ -245,6 +245,13 @@ scan_mentions() {
         log_info "@zapat mention by $comment_login on #${item_number} in ${repo}: $mention_text"
 
         # Route to appropriate trigger (pass project_slug from outer loop via CURRENT_PROJECT)
+        # Check dispatch cap (DISPATCH_COUNT/MAX_DISPATCH are global, set in main loop)
+        if [[ ${DISPATCH_COUNT:-0} -ge ${MAX_DISPATCH:-20} ]]; then
+            log_warn "Per-cycle dispatch limit reached — deferring mention on #${item_number}"
+            echo "$comment_id" >> "$PROCESSED_MENTIONS"
+            continue
+        fi
+
         local cur_project="${CURRENT_PROJECT:-default}"
         if [[ "$is_pr" == "true" ]]; then
             "$SCRIPT_DIR/triggers/on-new-pr.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
@@ -262,6 +269,7 @@ scan_mentions() {
             fi
             TOTAL_ISSUES=$((TOTAL_ISSUES + 1))
         fi
+        DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
 
         echo "$comment_id" >> "$PROCESSED_MENTIONS"
     done
