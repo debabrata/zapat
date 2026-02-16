@@ -87,9 +87,20 @@ launch_claude_session() {
         return 0
     fi
 
+    # Dynamic timeout scaling based on system load
+    local active_windows
+    active_windows=$(tmux list-windows -t "$TMUX_SESSION" 2>/dev/null | wc -l | tr -d ' ')
+    local scale_factor=1
+    if [[ $active_windows -gt 5 ]]; then
+        # Scale timeout: each 10 extra windows adds 1x more time
+        scale_factor=$(( 1 + active_windows / 10 ))
+    fi
+    local perm_timeout=$(( ${TMUX_PERMISSIONS_TIMEOUT:-30} * scale_factor ))
+    local ready_timeout=$(( ${TMUX_READINESS_TIMEOUT:-30} * scale_factor ))
+
     # Step 1: Wait for the --dangerously-skip-permissions confirmation prompt
     # Claude CLI shows "Do you trust the files" or similar prompt
-    if ! wait_for_tmux_content "$window" "(Yes|trust|skip permissions|dangerously)" 15; then
+    if ! wait_for_tmux_content "$window" "(Yes|trust|skip permissions|dangerously)" "$perm_timeout"; then
         log_warn "Permissions prompt not detected, trying anyway..."
         sleep 5
     fi
@@ -100,7 +111,7 @@ launch_claude_session() {
     tmux send-keys -t "${TMUX_SESSION}:${window}" Enter
 
     # Step 3: Wait for Claude to be ready (look for the input prompt indicator)
-    if ! wait_for_tmux_content "$window" "(>|Claude|Type|message|\\$)" 15; then
+    if ! wait_for_tmux_content "$window" "(>|Claude|Type|message|\\$)" "$ready_timeout"; then
         log_warn "Claude prompt not detected, trying anyway..."
         sleep 5
     fi
