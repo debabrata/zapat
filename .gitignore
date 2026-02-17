@@ -11,6 +11,7 @@ state/agent-work-slots/
 state/poll.lock/
 state/processed-*.txt
 state/*.pid
+state/last-mention-poll.txt
 
 # Logs
 logs/*.log
