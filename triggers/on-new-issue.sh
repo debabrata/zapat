@@ -70,6 +70,27 @@ if [[ -z "$REPO_PATH" || ! -d "$REPO_PATH" ]]; then
     REPO_PATH="$SCRIPT_DIR"
 fi
 
+# --- Create Fresh Readonly Worktree ---
+if [[ "$PROJECT_SLUG" != "default" ]]; then
+    READONLY_WORKTREE="${ZAPAT_HOME:-$HOME/.zapat}/worktrees/${PROJECT_SLUG}--${REPO##*/}--triage-${ISSUE_NUMBER}"
+else
+    READONLY_WORKTREE="${ZAPAT_HOME:-$HOME/.zapat}/worktrees/${REPO##*/}-triage-${ISSUE_NUMBER}"
+fi
+
+EFFECTIVE_PATH="$REPO_PATH"
+if ensure_repo_fresh "$REPO_PATH" "$READONLY_WORKTREE"; then
+    EFFECTIVE_PATH="$READONLY_WORKTREE"
+else
+    log_warn "Falling back to repo checkout at $REPO_PATH"
+    READONLY_WORKTREE=""
+fi
+
+# Update trap to clean up worktree on exit
+trap '
+    [[ -n "${READONLY_WORKTREE:-}" ]] && cleanup_readonly_worktree "$REPO_PATH" "$READONLY_WORKTREE"
+    cleanup_on_exit "" "$ITEM_STATE_FILE" $?
+' EXIT
+
 # --- Build Mention Context Block ---
 MENTION_BLOCK=""
 if [[ -n "$MENTION_CONTEXT" ]]; then
@@ -100,7 +121,7 @@ else
     TMUX_WINDOW="triage-${REPO##*/}-${ISSUE_NUMBER}"
 fi
 
-launch_claude_session "$TMUX_WINDOW" "$REPO_PATH" "$PROMPT_FILE"
+launch_claude_session "$TMUX_WINDOW" "$EFFECTIVE_PATH" "$PROMPT_FILE"
 rm -f "$PROMPT_FILE"
 
 # --- Monitor with Timeout ---
@@ -115,6 +136,12 @@ if [[ $monitor_exit -eq 2 ]]; then
 fi
 
 log_info "Triage session ended for issue #${ISSUE_NUMBER}"
+
+# --- Cleanup Readonly Worktree ---
+if [[ -n "${READONLY_WORKTREE:-}" ]]; then
+    cleanup_readonly_worktree "$REPO_PATH" "$READONLY_WORKTREE"
+    READONLY_WORKTREE=""
+fi
 
 # --- Remove status label ---
 gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \

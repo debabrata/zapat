@@ -69,8 +69,8 @@ GitHub Issue (labeled) --> Poller (every 2 min) --> Trigger Script --> Claude Co
 **Flow:**
 1. The cron-based poller (`bin/poll-github.sh`) scans configured repos for issues/PRs with pipeline labels.
 2. When found, it dispatches the appropriate trigger script (`triggers/on-new-issue.sh`, `triggers/on-work-issue.sh`, etc.) in a background tmux session.
-3. The trigger script launches Claude Code with a team of specialized agent personas that collaborate to complete the task.
-4. For implementations, the builder agent works in an isolated git worktree, creates a PR, and the pipeline auto-labels it for review and testing.
+3. The trigger script fetches `origin/main` and creates an isolated worktree under `~/.zapat/worktrees/` before launching agents, ensuring they always see the latest code.
+4. All job types (triage, review, research, implementation, rework) run in isolated git worktrees — never touching the user's main checkout. Implementation worktrees create PRs; read-only worktrees are cleaned up after the session.
 5. The auto-merge gate evaluates risk (low/medium/high) and merges if all checks pass.
 6. When a PR merges and `main` moves forward, the auto-rebase system detects stale `agent/*` PRs and rebases them automatically. On conflict, it adds the `needs-rebase` label and posts details.
 

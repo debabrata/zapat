@@ -479,6 +479,66 @@ read_repos() {
     grep -v '^#' "$conf" | grep -v '^[[:space:]]*$'
 }
 
+# Create a fresh, detached worktree at WORKTREE_DIR from origin's default branch.
+# Usage: ensure_repo_fresh REPO_PATH WORKTREE_DIR
+# Returns 0 on success, 1 on failure (caller should fall back to REPO_PATH).
+ensure_repo_fresh() {
+    local repo_path="$1"
+    local worktree_dir="$2"
+
+    if [[ ! -d "$repo_path/.git" && ! -f "$repo_path/.git" ]]; then
+        log_warn "Not a git repo: $repo_path — skipping worktree setup"
+        return 1
+    fi
+
+    # Fetch latest refs (tolerate failure — agents will read cached state)
+    git -C "$repo_path" fetch origin 2>/dev/null || log_warn "git fetch failed for $repo_path — using cached refs"
+
+    # Determine default branch via remote HEAD
+    local default_branch
+    default_branch=$(git -C "$repo_path" remote show origin 2>/dev/null \
+        | sed -n 's/.*HEAD branch: //p')
+    if [[ -z "$default_branch" ]]; then
+        # Fallback: try main then master
+        if git -C "$repo_path" rev-parse --verify "origin/main" &>/dev/null; then
+            default_branch="main"
+        elif git -C "$repo_path" rev-parse --verify "origin/master" &>/dev/null; then
+            default_branch="master"
+        else
+            log_warn "Cannot determine default branch for $repo_path"
+            return 1
+        fi
+    fi
+
+    # Clean up any stale worktree at the target path
+    if [[ -d "$worktree_dir" ]]; then
+        log_warn "Cleaning up stale readonly worktree at $worktree_dir"
+        git -C "$repo_path" worktree remove "$worktree_dir" --force 2>/dev/null || rm -rf "$worktree_dir"
+    fi
+
+    # Create detached worktree from origin/<default_branch>
+    mkdir -p "$(dirname "$worktree_dir")"
+    if ! git -C "$repo_path" worktree add --detach "$worktree_dir" "origin/${default_branch}" 2>/dev/null; then
+        log_warn "Failed to create readonly worktree at $worktree_dir"
+        return 1
+    fi
+
+    log_info "Readonly worktree created at $worktree_dir (origin/${default_branch})"
+    return 0
+}
+
+# Remove a readonly worktree created by ensure_repo_fresh.
+# Safe to call even if already removed.
+# Usage: cleanup_readonly_worktree REPO_PATH WORKTREE_DIR
+cleanup_readonly_worktree() {
+    local repo_path="$1"
+    local worktree_dir="$2"
+
+    [[ -z "$worktree_dir" || ! -d "$worktree_dir" ]] && return 0
+
+    git -C "$repo_path" worktree remove "$worktree_dir" --force 2>/dev/null || rm -rf "$worktree_dir"
+}
+
 # --- Agent Configuration ---
 
 # Read agents.conf for the current project and set role variables

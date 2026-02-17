@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Zapat - Research Issue Trigger
 # Launches an Agent Team to research/analyze an issue (strategy, planning, investigation).
-# No git worktree needed — research agents read code and create issues/comments, not code changes.
+# Uses a fresh readonly worktree so agents see the latest origin/main.
 # Usage: on-research-issue.sh OWNER/REPO ISSUE_NUMBER
 
 set -euo pipefail
@@ -70,6 +70,27 @@ if [[ -z "$REPO_PATH" || ! -d "$REPO_PATH" ]]; then
     REPO_PATH="$SCRIPT_DIR"
 fi
 
+# --- Create Fresh Readonly Worktree ---
+if [[ "$PROJECT_SLUG" != "default" ]]; then
+    READONLY_WORKTREE="${ZAPAT_HOME:-$HOME/.zapat}/worktrees/${PROJECT_SLUG}--${REPO##*/}--research-${ISSUE_NUMBER}"
+else
+    READONLY_WORKTREE="${ZAPAT_HOME:-$HOME/.zapat}/worktrees/${REPO##*/}-research-${ISSUE_NUMBER}"
+fi
+
+EFFECTIVE_PATH="$REPO_PATH"
+if ensure_repo_fresh "$REPO_PATH" "$READONLY_WORKTREE"; then
+    EFFECTIVE_PATH="$READONLY_WORKTREE"
+else
+    log_warn "Falling back to repo checkout at $REPO_PATH"
+    READONLY_WORKTREE=""
+fi
+
+# Update trap to clean up worktree on exit
+trap '
+    [[ -n "${READONLY_WORKTREE:-}" ]] && cleanup_readonly_worktree "$REPO_PATH" "$READONLY_WORKTREE"
+    cleanup_on_exit "$SLOT_FILE" "$ITEM_STATE_FILE" $?
+' EXIT
+
 # --- Build Prompt ---
 FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/research-issue.txt" \
     "REPO=$REPO" \
@@ -83,14 +104,13 @@ PROMPT_FILE=$(mktemp)
 echo "$FINAL_PROMPT" > "$PROMPT_FILE"
 
 # --- Launch Claude Interactively in tmux ---
-# Research agents run in the repo's main directory (read-only, no worktree needed)
 if [[ "$PROJECT_SLUG" != "default" ]]; then
     TMUX_WINDOW="${PROJECT_SLUG}:research-${REPO##*/}-${ISSUE_NUMBER}"
 else
     TMUX_WINDOW="research-${REPO##*/}-${ISSUE_NUMBER}"
 fi
 
-launch_claude_session "$TMUX_WINDOW" "$REPO_PATH" "$PROMPT_FILE"
+launch_claude_session "$TMUX_WINDOW" "$EFFECTIVE_PATH" "$PROMPT_FILE"
 rm -f "$PROMPT_FILE"
 
 # --- Monitor with Timeout ---
@@ -106,6 +126,12 @@ if [[ $monitor_exit -eq 2 ]]; then
 fi
 
 log_info "Research session ended for issue #${ISSUE_NUMBER}"
+
+# --- Cleanup Readonly Worktree ---
+if [[ -n "${READONLY_WORKTREE:-}" ]]; then
+    cleanup_readonly_worktree "$REPO_PATH" "$READONLY_WORKTREE"
+    READONLY_WORKTREE=""
+fi
 
 # --- Remove status label and agent-research label (prevent reprocessing) ---
 gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \

@@ -85,7 +85,7 @@ Result: a PR on an `agent/issue-{number}-{slug}` branch with tests.
 ```
 Example issue: "Fix login timeout error on slow connections"
 Label: agent-work
-→ Builder creates fix in /tmp/agent-worktrees/
+→ Builder creates fix in ~/.zapat/worktrees/
 → Runs tests, pushes branch, opens PR
 → PR auto-labeled _review for code review
 → PR auto-labeled zapat-testing for test verification
@@ -354,7 +354,7 @@ A complete lifecycle of a feature request:
    → Adds agent-work label
 
 4. [30 min] Implementation team:
-   → Creates worktree at /tmp/agent-worktrees/web-app-123
+   → Creates worktree at ~/.zapat/worktrees/web-app-123
    → Builder implements ExportPDFButton component
    → Writes unit tests for the component
    → Security reviewer confirms no sensitive data in export

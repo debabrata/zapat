@@ -91,7 +91,7 @@ A cron job polls GitHub every 2 minutes. When it finds a labeled issue or PR, it
 - **Timeouts**: Every session has a hard timeout (10-30 min) enforced by tmux monitor
 - **Hold label**: Add `hold` to any PR to block auto-merge indefinitely
 - **Atomic locking**: Directory-based locks prevent concurrent poll runs
-- **Git worktrees**: Each implementation runs in an isolated `/tmp/` worktree — never touches the main checkout
+- **Git worktrees**: All agent jobs run in isolated worktrees under `~/.zapat/worktrees/` — never touches the main checkout
 
 ---
 

@@ -94,7 +94,7 @@ Zapat uses `$HOME` for all user-relative paths. Default locations on Linux:
 |------|---------|
 | `~/.claude/agents/` | Agent persona files |
 | `~/.claude/agent-memory/_shared/` | Shared agent memory |
-| `/tmp/agent-worktrees/` | Isolated git worktrees for implementations |
+| `~/.zapat/worktrees/` | Isolated git worktrees for all agent jobs |
 
 ## Running as a systemd Service
 
