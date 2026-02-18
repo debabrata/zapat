@@ -38,7 +38,7 @@ describe('Header', () => {
     // Find the decorative divider
     const divider = container.querySelector('[aria-hidden="true"]')
     expect(divider).toBeInTheDocument()
-    expect(divider).toHaveClass('h-4', 'w-px', 'lg:hidden')
+    expect(divider).toHaveClass('h-5', 'w-px', 'lg:hidden')
     expect(divider).toHaveClass('bg-zinc-300')
     expect(divider).toHaveClass('dark:bg-zinc-600')
   })
@@ -50,12 +50,9 @@ describe('Header', () => {
     expect(divider).toBeTruthy()
 
     // Verify ordering: ProjectSelector -> divider -> ThemeToggle
-    const mobileSelector = screen.getAllByTestId('project-selector')
-      .find((el) => el.className.includes('lg:hidden'))
     const themeToggle = screen.getByTestId('theme-toggle')
 
-    // The divider's previous sibling should be the Suspense wrapper containing ProjectSelector
-    // and next sibling should be ThemeToggle
+    // The divider's parent contains the right-side controls
     const parent = divider!.parentElement!
     const children = Array.from(parent.children)
     const dividerIdx = children.indexOf(divider as Element)
