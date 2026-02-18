@@ -1,6 +1,6 @@
 describe('dashboard port logic', () => {
   it('uses DASHBOARD_PORT env var as fallback', () => {
-    // Test the port calculation logic directly (mirrors dashboard.mjs line 30)
+    // Test the port calculation logic directly (mirrors dashboard.mjs)
     const calcPort = (optsServe: any, envPort: any) => {
       return parseInt(optsServe) || parseInt(envPort) || 3000
     }
@@ -25,19 +25,22 @@ describe('dashboard port logic', () => {
     expect(calcPort(true, undefined)).toBe(3000)
   })
 
-  it('validates port range', () => {
-    const isValidPort = (port: number) => port >= 1 && port <= 65535
+  it('validates port range (1024-65535)', () => {
+    const isValidPort = (port: number) => port >= 1024 && port <= 65535
 
     expect(isValidPort(3000)).toBe(true)
-    expect(isValidPort(1)).toBe(true)
+    expect(isValidPort(1024)).toBe(true)
     expect(isValidPort(65535)).toBe(true)
+    expect(isValidPort(8080)).toBe(true)
     expect(isValidPort(0)).toBe(false)
+    expect(isValidPort(1)).toBe(false)
+    expect(isValidPort(80)).toBe(false)
+    expect(isValidPort(1023)).toBe(false)
     expect(isValidPort(65536)).toBe(false)
     expect(isValidPort(-1)).toBe(false)
   })
 
   it('dev mode passes PORT env from DASHBOARD_PORT', () => {
-    // Test the dev port calculation (mirrors dashboard.mjs line 25)
     const calcDevPort = (envDashboardPort: any) => {
       return String(parseInt(envDashboardPort) || 3000)
     }
@@ -45,6 +48,25 @@ describe('dashboard port logic', () => {
     expect(calcDevPort(undefined)).toBe('3000')
     expect(calcDevPort('4200')).toBe('4200')
     expect(calcDevPort('not-a-number')).toBe('3000')
+  })
+})
+
+describe('resolveHost logic', () => {
+  // Mirrors the exported resolveHost function in dashboard.mjs
+  function resolveHost(env: Record<string, string | undefined>): string {
+    return env.DASHBOARD_HOST || '127.0.0.1'
+  }
+
+  it('defaults to 127.0.0.1 when no env var', () => {
+    expect(resolveHost({})).toBe('127.0.0.1')
+  })
+
+  it('uses DASHBOARD_HOST env var when set', () => {
+    expect(resolveHost({ DASHBOARD_HOST: '0.0.0.0' })).toBe('0.0.0.0')
+  })
+
+  it('allows specific IP addresses', () => {
+    expect(resolveHost({ DASHBOARD_HOST: '192.168.1.100' })).toBe('192.168.1.100')
   })
 })
 

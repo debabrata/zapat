@@ -21,6 +21,14 @@ export function registerDashboardCommand(program) {
 }
 
 /**
+ * Resolve the host for the dashboard.
+ * Defaults to 127.0.0.1 for security; set DASHBOARD_HOST=0.0.0.0 for LAN access.
+ */
+export function resolveHost() {
+  return process.env.DASHBOARD_HOST || '127.0.0.1';
+}
+
+/**
  * Resolve the port for the dashboard.
  * Priority: CLI flag → DASHBOARD_PORT_<SLUG> → DASHBOARD_PORT → 3000
  */
@@ -39,12 +47,12 @@ export function resolvePort(cliPort, projectSlug) {
 /**
  * Check if a port is available by attempting to listen on it.
  */
-function checkPort(port) {
+function checkPort(port, host) {
   return new Promise((resolve) => {
     const server = net.createServer();
     server.once('error', () => resolve(false));
     server.once('listening', () => { server.close(); resolve(true); });
-    server.listen(port, '127.0.0.1');
+    server.listen(port, host);
   });
 }
 
@@ -69,39 +77,41 @@ async function runDashboard(opts) {
     automationEnv.PROJECT_SLUG = projectSlug;
   }
 
+  const host = resolveHost();
+
   if (opts.dev) {
     const devPort = resolvePort(undefined, projectSlug);
-    if (devPort < 1 || devPort > 65535) {
-      console.error(`Invalid port: ${devPort}. Must be 1-65535.`);
+    if (devPort < 1024 || devPort > 65535) {
+      console.error(`Invalid port: ${devPort}. Must be 1024-65535.`);
       process.exitCode = 1;
       return;
     }
-    if (!await checkPort(devPort)) {
+    if (!await checkPort(devPort, host)) {
       console.error(`Port ${devPort} is already in use. Choose a different port or stop the existing process.`);
       process.exitCode = 1;
       return;
     }
     const label = projectSlug ? ` (project: ${projectSlug})` : '';
-    console.log(`Starting Next.js dev server on port ${devPort}${label}...`);
-    execSync(`npm run dev -- -H 127.0.0.1 -p ${devPort}`, { cwd: dashboardDir, stdio: 'inherit', env: automationEnv });
+    console.log(`Starting Next.js dev server on ${host}:${devPort}${label}...`);
+    execSync(`npm run dev -- -H ${host} -p ${devPort}`, { cwd: dashboardDir, stdio: 'inherit', env: automationEnv });
     return;
   }
 
   if (opts.serve !== undefined && !opts.static) {
     const port = resolvePort(opts.serve, projectSlug);
-    if (port < 1 || port > 65535) {
-      console.error(`Invalid port: ${port}. Must be 1-65535.`);
+    if (port < 1024 || port > 65535) {
+      console.error(`Invalid port: ${port}. Must be 1024-65535.`);
       process.exitCode = 1;
       return;
     }
-    if (!await checkPort(port)) {
+    if (!await checkPort(port, host)) {
       console.error(`Port ${port} is already in use. Choose a different port or stop the existing process.`);
       process.exitCode = 1;
       return;
     }
     const label = projectSlug ? ` (project: ${projectSlug})` : '';
-    console.log(`Starting Next.js production server on port ${port}${label}...`);
-    execSync(`npm run start -- -H 127.0.0.1 -p ${port}`, { cwd: dashboardDir, stdio: 'inherit', env: automationEnv });
+    console.log(`Starting Next.js production server on ${host}:${port}${label}...`);
+    execSync(`npm run start -- -H ${host} -p ${port}`, { cwd: dashboardDir, stdio: 'inherit', env: automationEnv });
     return;
   }
 

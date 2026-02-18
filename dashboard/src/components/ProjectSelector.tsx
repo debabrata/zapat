@@ -94,14 +94,19 @@ export function ProjectSelector({ className }: { className?: string }) {
     }
   }, [focusIndex, open])
 
-  // Show static label if there's only one project
+  // Show static label if there's only one project (same pill styling as dropdown trigger)
   if (projects.length <= 1) {
     const name = projects.length === 1 ? projects[0].name : null
     if (!name) return null
     return (
-      <div className={cn('flex items-center', className)}>
-        <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400 max-w-[160px] truncate">
-          {name}
+      <div className={cn('relative', className)}>
+        <span
+          className={cn(
+            'flex items-center rounded-md px-2.5 py-1.5 text-sm font-medium',
+            'text-zinc-600 dark:text-zinc-400',
+          )}
+        >
+          <span className="max-w-[160px] truncate">{name}</span>
         </span>
       </div>
     )
