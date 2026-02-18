@@ -13,6 +13,7 @@ interface UseProjectResult {
   project: string | undefined
   projectName: string
   projects: ProjectInfo[]
+  defaultProject: string | undefined
   setProject: (slug: string | undefined) => void
   isLoading: boolean
 }
@@ -24,13 +25,18 @@ export function useProject(): UseProjectResult {
 
   const { data: configData, isLoading } = usePolling<{
     projects: ProjectInfo[]
+    defaultProject?: string
   }>({
     url: '/api/config',
     interval: 300_000, // refresh project list every 5 min
   })
 
   const projects = configData?.projects || []
-  const project = searchParams.get('project') || undefined
+  const defaultProject = configData?.defaultProject
+  const urlProject = searchParams.get('project') || undefined
+
+  // Use URL param if set, otherwise fall back to server-side default
+  const project = urlProject ?? defaultProject
 
   const projectName = project
     ? projects.find((p) => p.slug === project)?.name || project
@@ -50,5 +56,5 @@ export function useProject(): UseProjectResult {
     [searchParams, router, pathname],
   )
 
-  return { project, projectName, projects, setProject, isLoading }
+  return { project, projectName, projects, defaultProject, setProject, isLoading }
 }

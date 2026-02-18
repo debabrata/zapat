@@ -1,19 +1,18 @@
 'use client'
 
 import { Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { SuccessChart } from '@/components/SuccessChart'
 import { StatCard } from '@/components/StatCard'
 import { StatsGrid } from '@/components/StatsGrid'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { usePolling } from '@/hooks/usePolling'
+import { useProject } from '@/hooks/useProject'
 import { pipelineConfig } from '../../../pipeline.config'
 import type { ChartDataPoint, MetricEntry } from '@/lib/types'
 
 function AnalyticsContent() {
-  const searchParams = useSearchParams()
-  const project = searchParams.get('project')
+  const { project } = useProject()
   const projectParam = project ? `&project=${encodeURIComponent(project)}` : ''
 
   const { data: chart14, isLoading: chart14Loading } = usePolling<{ chartData: ChartDataPoint[] }>({

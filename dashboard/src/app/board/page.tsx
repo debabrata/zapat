@@ -1,16 +1,15 @@
 'use client'
 
 import { Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { KanbanBoard } from '@/components/KanbanBoard'
 import { Skeleton } from '@/components/ui/skeleton'
 import { usePolling } from '@/hooks/usePolling'
+import { useProject } from '@/hooks/useProject'
 import { pipelineConfig } from '../../../pipeline.config'
 import type { PipelineItem } from '@/lib/types'
 
 function BoardContent() {
-  const searchParams = useSearchParams()
-  const project = searchParams.get('project')
+  const { project } = useProject()
   const projectQuery = project ? `?project=${encodeURIComponent(project)}` : ''
 
   const { data, isLoading } = usePolling<{ items: PipelineItem[] }>({

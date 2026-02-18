@@ -94,9 +94,17 @@ export function ProjectSelector({ className }: { className?: string }) {
     }
   }, [focusIndex, open])
 
-  // Don't show selector if there's only one project (or none)
+  // Show static label if there's only one project
   if (projects.length <= 1) {
-    return null
+    const name = projects.length === 1 ? projects[0].name : null
+    if (!name) return null
+    return (
+      <div className={cn('flex items-center', className)}>
+        <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400 max-w-[160px] truncate">
+          {name}
+        </span>
+      </div>
+    )
   }
 
   const listboxId = 'project-selector-listbox'
