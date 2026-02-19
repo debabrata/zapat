@@ -516,14 +516,20 @@ ensure_repo_fresh() {
         git -C "$repo_path" worktree remove "$worktree_dir" --force 2>/dev/null || rm -rf "$worktree_dir"
     fi
 
-    # Create detached worktree from origin/<default_branch>
+    # Create detached worktree preferring local HEAD over origin/<default_branch>.
+    # This ensures unpushed local commits (e.g. pipeline fixes) are used immediately.
     mkdir -p "$(dirname "$worktree_dir")"
-    if ! git -C "$repo_path" worktree add --detach "$worktree_dir" "origin/${default_branch}" 2>/dev/null; then
-        log_warn "Failed to create readonly worktree at $worktree_dir"
-        return 1
+    local worktree_ref="HEAD"
+    if ! git -C "$repo_path" worktree add --detach "$worktree_dir" HEAD 2>/dev/null; then
+        # Fallback to origin if local HEAD fails
+        worktree_ref="origin/${default_branch}"
+        if ! git -C "$repo_path" worktree add --detach "$worktree_dir" "origin/${default_branch}" 2>/dev/null; then
+            log_warn "Failed to create readonly worktree at $worktree_dir"
+            return 1
+        fi
     fi
 
-    log_info "Readonly worktree created at $worktree_dir (origin/${default_branch})"
+    log_info "Readonly worktree created at $worktree_dir ($worktree_ref)"
     return 0
 }
 

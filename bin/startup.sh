@@ -257,18 +257,20 @@ echo "[7/9] Installing crontab..."
 EXISTING_CRON=$(crontab -l 2>/dev/null | sed '/^# --- Zapat/,/^# --- End Zapat/d' || true)
 
 # Build new crontab
+# Note: On macOS, cron lacks Full Disk Access and cannot directly execute scripts
+# in user directories ("Operation not permitted"). Wrapping with /bin/bash avoids this.
 NEW_CRON="${EXISTING_CRON}
 # --- Zapat (managed by startup.sh) ---
 # Daily standup Mon-Fri 8 AM
-0 8 * * 1-5 ${SCRIPT_DIR}/jobs/daily-standup.sh >> ${SCRIPT_DIR}/logs/cron-daily.log 2>&1
+0 8 * * 1-5 /bin/bash ${SCRIPT_DIR}/jobs/daily-standup.sh >> ${SCRIPT_DIR}/logs/cron-daily.log 2>&1
 # Weekly planning Monday 9 AM
-0 9 * * 1 ${SCRIPT_DIR}/jobs/weekly-planning.sh >> ${SCRIPT_DIR}/logs/cron-weekly.log 2>&1
+0 9 * * 1 /bin/bash ${SCRIPT_DIR}/jobs/weekly-planning.sh >> ${SCRIPT_DIR}/logs/cron-weekly.log 2>&1
 # Monthly strategy 1st of month 10 AM
-0 10 1 * * ${SCRIPT_DIR}/jobs/monthly-strategy.sh >> ${SCRIPT_DIR}/logs/cron-monthly.log 2>&1
+0 10 1 * * /bin/bash ${SCRIPT_DIR}/jobs/monthly-strategy.sh >> ${SCRIPT_DIR}/logs/cron-monthly.log 2>&1
 # GitHub polling (configurable via POLL_INTERVAL_MINUTES, default 2)
-*/${POLL_INTERVAL_MINUTES:-2} * * * * ${SCRIPT_DIR}/bin/poll-github.sh >> ${SCRIPT_DIR}/logs/cron-poll.log 2>&1
+*/${POLL_INTERVAL_MINUTES:-2} * * * * /bin/bash ${SCRIPT_DIR}/bin/poll-github.sh >> ${SCRIPT_DIR}/logs/cron-poll.log 2>&1
 # Weekly security scan Sunday 6 AM
-0 6 * * 0 ${SCRIPT_DIR}/bin/run-agent.sh --job-name weekly-security-scan --prompt-file ${SCRIPT_DIR}/prompts/weekly-security-scan.txt --budget \${MAX_BUDGET_SECURITY_SCAN:-15} --allowed-tools Read,Glob,Grep,Bash --timeout 1800 --notify slack >> ${SCRIPT_DIR}/logs/cron-security.log 2>&1
+0 6 * * 0 /bin/bash ${SCRIPT_DIR}/bin/run-agent.sh --job-name weekly-security-scan --prompt-file ${SCRIPT_DIR}/prompts/weekly-security-scan.txt --budget \${MAX_BUDGET_SECURITY_SCAN:-15} --allowed-tools Read,Glob,Grep,Bash --timeout 1800 --notify slack >> ${SCRIPT_DIR}/logs/cron-security.log 2>&1
 # Daily health digest at 8:05 AM
 5 8 * * * cd ${SCRIPT_DIR} && node bin/zapat status --slack >> ${SCRIPT_DIR}/logs/cron-digest.log 2>&1
 # Log rotation weekly Sunday 3 AM

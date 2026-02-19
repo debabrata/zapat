@@ -210,7 +210,24 @@ list_retryable_items() {
         local status next_retry
         status=$(jq -r '.status' "$state_file" 2>/dev/null || echo "unknown")
 
-        # Only pending items with a retry timer
+        # Detect stale "running" items — if updated_at is older than 15 minutes
+        # and no matching tmux window exists, treat as failed and make retryable
+        if [[ "$status" == "running" ]]; then
+            local updated_at updated_epoch stale_threshold=900
+            updated_at=$(jq -r '.updated_at // empty' "$state_file" 2>/dev/null)
+            if [[ -n "$updated_at" ]]; then
+                updated_epoch=$(date -u -jf '%Y-%m-%dT%H:%M:%SZ' "$updated_at" '+%s' 2>/dev/null || \
+                    date -u -d "$updated_at" '+%s' 2>/dev/null || echo "0")
+                if [[ $(( now_epoch - updated_epoch )) -gt $stale_threshold ]]; then
+                    log_warn "Stale running item detected: $(basename "$state_file") (last updated: $updated_at)"
+                    update_item_state "$state_file" "failed" "Stale running item — tmux session likely lost"
+                    echo "$state_file"
+                fi
+            fi
+            continue
+        fi
+
+        # Only pending/failed items are retryable
         if [[ "$status" != "pending" && "$status" != "failed" ]]; then
             continue
         fi

@@ -295,7 +295,17 @@ monitor_session() {
 
     log_info "Monitoring session '$window' (timeout: ${timeout}s)"
 
-    while tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -qF "$window"; do
+    while true; do
+        # Detect if the entire tmux session was lost
+        if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+            log_warn "tmux session '$TMUX_SESSION' no longer exists — session lost during '$window'"
+            rm -f "$signal_file"
+            return 1
+        fi
+        # Check if the specific window still exists
+        if ! tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -qF "$window"; then
+            break
+        fi
         local elapsed=$(( $(date +%s) - start ))
         if [[ $elapsed -gt $timeout ]]; then
             log_warn "Session '$window' timed out after ${timeout}s"
