@@ -91,6 +91,11 @@ trap '
     cleanup_on_exit "$SLOT_FILE" "$ITEM_STATE_FILE" $?
 ' EXIT
 
+# --- Swap in slim pipeline context for agents ---
+if [[ -n "${READONLY_WORKTREE:-}" && -f "$SCRIPT_DIR/CLAUDE-pipeline.md" ]]; then
+    cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$EFFECTIVE_PATH/CLAUDE.md"
+fi
+
 # --- Build Prompt ---
 FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/research-issue.txt" \
     "REPO=$REPO" \
