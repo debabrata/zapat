@@ -21,7 +21,7 @@ Options:
   --notify CHANNEL          Notification channels: slack, github, or both (comma-separated)
   --github-comment REPO#NUM GitHub comment target (e.g., owner/repo#123)
   --timeout SECONDS         Max runtime in seconds (default: 600)
-  --model MODEL             Override Claude model for this invocation
+  --model MODEL             Override Claude model (default: CLAUDE_MODEL or claude-opus-4-6)
   --project SLUG            Target a specific project (loads project.env overrides)
   --substitutions K=V...    Prompt placeholder substitutions (repeatable)
   -h, --help                Show this help

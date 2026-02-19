@@ -68,7 +68,7 @@ launch_claude_session() {
     if [[ -n "$extra_env" ]]; then
         cmd+="$extra_env "
     fi
-    cmd+="claude --model $model "
+    cmd+="claude --model '${model}' "
     cmd+="--dangerously-skip-permissions; "
     cmd+="exit"
 
