@@ -3,7 +3,7 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 import { createServer } from 'http';
 import net from 'net';
-import { getAutomationDir, getRepos, getProjects } from '../lib/config.mjs';
+import { getAutomationDir, getRepos, getProjects, getConfigValue } from '../lib/config.mjs';
 import { readMetrics, ensureDataDir } from '../lib/metrics.mjs';
 import { exec } from '../lib/exec.mjs';
 
@@ -37,11 +37,11 @@ export function resolvePort(cliPort, projectSlug) {
 
   if (projectSlug) {
     const envKey = `DASHBOARD_PORT_${projectSlug.toUpperCase().replace(/-/g, '_')}`;
-    const perProjectPort = parseInt(process.env[envKey]);
+    const perProjectPort = parseInt(getConfigValue(envKey, ''));
     if (perProjectPort) return perProjectPort;
   }
 
-  return parseInt(process.env.DASHBOARD_PORT) || 3000;
+  return parseInt(getConfigValue('DASHBOARD_PORT', '')) || 3000;
 }
 
 /**
