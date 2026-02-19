@@ -74,13 +74,9 @@ launch_claude_session() {
     log_info "tmux window '$window' created"
 
     if [[ "${TMUX_USE_SLEEP_FALLBACK:-0}" == "1" ]]; then
-        # Legacy fallback: hardcoded sleeps
+        # Legacy fallback: hardcoded sleeps (no confirmation prompt with --dangerously-skip-permissions)
         log_info "Using sleep fallback for tmux interaction"
-        sleep 5
-        tmux send-keys -t "${TMUX_SESSION}:${window}" Down
-        sleep 1
-        tmux send-keys -t "${TMUX_SESSION}:${window}" Enter
-        sleep 5
+        sleep 10
         tmux load-buffer "$prompt_file"
         tmux paste-buffer -t "${TMUX_SESSION}:${window}"
         sleep 2
@@ -96,32 +92,18 @@ launch_claude_session() {
         # Scale timeout: each 10 extra windows adds 1x more time
         scale_factor=$(( 1 + active_windows / 10 ))
     fi
-    local perm_timeout=$(( ${TMUX_PERMISSIONS_TIMEOUT:-30} * scale_factor ))
     local ready_timeout=$(( ${TMUX_READINESS_TIMEOUT:-30} * scale_factor ))
 
-    # Step 1: Wait for the --dangerously-skip-permissions confirmation prompt
-    # Claude CLI shows "Do you trust the files" or similar prompt
-    if ! wait_for_tmux_content "$window" "(Yes|trust|skip permissions|dangerously)" "$perm_timeout"; then
-        log_warn "Permissions prompt not detected, trying anyway..."
+    # Wait for Claude to be ready — with --dangerously-skip-permissions there is
+    # no confirmation prompt; Claude goes straight to the input prompt showing "❯".
+    if ! wait_for_tmux_content "$window" "(❯|bypass permissions)" "$ready_timeout"; then
+        log_warn "Claude prompt not detected after ${ready_timeout}s, trying anyway..."
         sleep 5
     fi
 
-    # Step 2: Accept the confirmation (Down arrow to select "Yes", Enter to confirm)
-    tmux send-keys -t "${TMUX_SESSION}:${window}" Down
-    sleep 1
-    tmux send-keys -t "${TMUX_SESSION}:${window}" Enter
-
-    # Step 3: Wait for Claude to be ready (look for the input prompt indicator)
-    if ! wait_for_tmux_content "$window" "(>|Claude|Type|message|\\$)" "$ready_timeout"; then
-        log_warn "Claude prompt not detected, trying anyway..."
-        sleep 5
-    fi
-
-    # Step 4: Paste the prompt
+    # Paste the prompt and submit
     tmux load-buffer "$prompt_file"
     tmux paste-buffer -t "${TMUX_SESSION}:${window}"
-
-    # Step 5: Wait briefly for paste to complete, then submit
     sleep 2
     tmux send-keys -t "${TMUX_SESSION}:${window}" Enter
 
