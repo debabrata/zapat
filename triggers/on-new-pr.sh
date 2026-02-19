@@ -101,10 +101,8 @@ trap '
     cleanup_on_exit "" "$ITEM_STATE_FILE" $?
 ' EXIT
 
-# --- Swap in slim pipeline context for agents ---
-if [[ -n "${READONLY_WORKTREE:-}" && -f "$SCRIPT_DIR/CLAUDE-pipeline.md" ]]; then
-    cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$EFFECTIVE_PATH/CLAUDE.md"
-fi
+# --- Copy slim CLAUDE.md into worktree ---
+cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$EFFECTIVE_PATH/CLAUDE.md"
 
 # --- Build Mention Context Block ---
 MENTION_BLOCK=""

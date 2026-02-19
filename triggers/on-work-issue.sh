@@ -129,10 +129,8 @@ git worktree add "$WORKTREE_DIR" -b "$BRANCH_NAME" "origin/${BASE_BRANCH}" 2>/de
 
 log_info "Worktree created at $WORKTREE_DIR on branch $BRANCH_NAME"
 
-# --- Swap in slim pipeline context for agents ---
-if [[ -f "$SCRIPT_DIR/CLAUDE-pipeline.md" ]]; then
-    cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$WORKTREE_DIR/CLAUDE.md"
-fi
+# --- Copy slim CLAUDE.md into worktree ---
+cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$WORKTREE_DIR/CLAUDE.md"
 
 # --- Build Mention Context Block ---
 MENTION_BLOCK=""
