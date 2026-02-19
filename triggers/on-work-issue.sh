@@ -133,7 +133,7 @@ log_info "Worktree created at $WORKTREE_DIR on branch $BRANCH_NAME"
 COMPLEXITY=$(classify_complexity 0 0 0 "" "$ISSUE_BODY")
 
 # Override: agent-full-review label forces full team
-if echo "$ISSUE_LABELS" | grep -qi "agent-full-review"; then
+if echo "$ISSUE_LABELS" | grep -qiw "agent-full-review"; then
     COMPLEXITY="full"
     log_info "Complexity overridden to 'full' by agent-full-review label"
 fi

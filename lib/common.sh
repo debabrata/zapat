@@ -677,15 +677,22 @@ classify_complexity() {
 
     local total_changes=$((additions + deletions))
 
-    # Check for security-sensitive paths in file list
+    # Check for security-sensitive directory paths in file list
     local has_security=false
-    if [[ -n "$file_list" ]] && echo "$file_list" | grep -qiE '(^|/)(auth|middleware|security|crypto|session|token|password|oauth)/'; then
+    if [[ -n "$file_list" ]] && echo "$file_list" | grep -qiE '(^|/)(auth|middleware|security|crypto|session|token|password|oauth|secrets|credentials|creds|keys|ssl|tls|certs|permissions|rbac|acl|migrations?|migrate)/'; then
         has_security=true
+    fi
+
+    # Check for security-sensitive file patterns (not just directories)
+    if [[ "$has_security" == "false" && -n "$file_list" ]]; then
+        if echo "$file_list" | grep -qiE '(\.env|\.key|\.pem|\.p12|\.cert|\.github/workflows/)'; then
+            has_security=true
+        fi
     fi
 
     # Check for keywords in issue/PR body that indicate full review
     local has_keywords=false
-    if [[ -n "$issue_body" ]] && echo "$issue_body" | grep -qiE '\b(security|auth[^o]|migration|breaking.change)\b'; then
+    if [[ -n "$issue_body" ]] && echo "$issue_body" | grep -qiE '\b(security|authenticat|authoriz|migration|breaking.change|vulnerability|CVE|exploit|injection|XSS|CSRF|SSRF|encryption|decrypt|privilege|escalation|credential|secret|api.key)'; then
         has_keywords=true
     fi
 
@@ -699,6 +706,13 @@ classify_complexity() {
     if $has_security || $has_keywords || [[ "$top_dirs" -ge 3 ]] || \
        [[ "$files_changed" -gt 5 ]] || [[ "$total_changes" -gt 300 ]]; then
         echo "full"
+        return 0
+    fi
+
+    # Unknown scope: all metrics are zero and no file list — floor at duo
+    # This prevents issues (where diff is unavailable) from bypassing security review
+    if [[ "$files_changed" -eq 0 ]] && [[ "$total_changes" -eq 0 ]] && [[ -z "$file_list" ]]; then
+        echo "duo"
         return 0
     fi
 

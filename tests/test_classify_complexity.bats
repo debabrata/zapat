@@ -31,10 +31,10 @@ teardown() {
     assert_output "solo"
 }
 
-@test "classify_complexity: solo — 0 files, 0 changes (empty)" {
+@test "classify_complexity: duo — 0 files, 0 changes (unknown scope floors at duo)" {
     run classify_complexity 0 0 0 "" ""
     assert_success
-    assert_output "solo"
+    assert_output "duo"
 }
 
 @test "classify_complexity: solo — docs only" {
@@ -117,6 +117,42 @@ teardown() {
     assert_output "full"
 }
 
+@test "classify_complexity: full — migrations/ in file list" {
+    run classify_complexity 1 10 5 "db/migrations/001-add-users.sql" ""
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — secrets/ in file list" {
+    run classify_complexity 1 10 5 "config/secrets/prod.yaml" ""
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — credentials/ in file list" {
+    run classify_complexity 1 10 5 "credentials/service-account.json" ""
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — .env file in file list" {
+    run classify_complexity 1 10 5 ".env.production" ""
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — .pem file in file list" {
+    run classify_complexity 1 10 5 "certs/server.pem" ""
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — .github/workflows/ in file list" {
+    run classify_complexity 1 10 5 ".github/workflows/deploy.yml" ""
+    assert_success
+    assert_output "full"
+}
+
 # --- classify_complexity: Full tier (by keywords in issue body) ---
 
 @test "classify_complexity: full — 'security' keyword in body" {
@@ -137,6 +173,42 @@ teardown() {
     assert_output "full"
 }
 
+@test "classify_complexity: full — 'authentication' keyword in body" {
+    run classify_complexity 1 10 5 "src/utils.js" "Fix authentication flow for SSO"
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — 'authorization' keyword in body" {
+    run classify_complexity 1 10 5 "src/utils.js" "Update authorization checks for admin role"
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — 'vulnerability' keyword in body" {
+    run classify_complexity 1 10 5 "src/utils.js" "Patch vulnerability in XML parser"
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — 'XSS' keyword in body" {
+    run classify_complexity 1 10 5 "src/utils.js" "Prevent XSS in user input fields"
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: full — 'credential' keyword in body" {
+    run classify_complexity 1 10 5 "src/utils.js" "Rotate credential storage mechanism"
+    assert_success
+    assert_output "full"
+}
+
+@test "classify_complexity: solo — 'author' does NOT trigger full" {
+    run classify_complexity 1 10 5 "src/utils.js" "Fix author name display"
+    assert_success
+    assert_output "solo"
+}
+
 # --- classify_complexity: Full tier (by directory spread) ---
 
 @test "classify_complexity: full — 3+ top-level directories" {
@@ -153,10 +225,10 @@ teardown() {
 
 # --- classify_complexity: Edge cases ---
 
-@test "classify_complexity: defaults for empty arguments" {
+@test "classify_complexity: defaults for empty arguments (unknown scope floors at duo)" {
     run classify_complexity
     assert_success
-    assert_output "solo"
+    assert_output "duo"
 }
 
 @test "classify_complexity: non-security path with 'auth' substring not in directory" {
