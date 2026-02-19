@@ -251,15 +251,91 @@ if [[ ! -s "$SCRIPT_DIR/state/processed-prs.txt" ]]; then
 fi
 
 # --- Step 8: Install Crontab ---
-echo "[7/9] Installing crontab..."
+echo "[7/9] Installing scheduled jobs..."
 
-# Read existing crontab, stripping everything between our marker comments
-EXISTING_CRON=$(crontab -l 2>/dev/null | sed '/^# --- Zapat/,/^# --- End Zapat/d' || true)
+if [[ "$(uname)" == "Darwin" ]]; then
+    # --- macOS: use launchd ---
+    # cron cannot access ~/Documents or other protected directories on macOS.
+    # launchd runs with the user's full permissions and handles macOS sandboxing correctly.
+    LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+    mkdir -p "$LAUNCH_AGENTS_DIR"
 
-# Build new crontab
-# Note: On macOS, cron lacks Full Disk Access and cannot directly execute scripts
-# in user directories ("Operation not permitted"). Wrapping with /bin/bash avoids this.
-NEW_CRON="${EXISTING_CRON}
+    # Remove old crontab entries if any
+    EXISTING_CRON=$(crontab -l 2>/dev/null | sed '/^# --- Zapat/,/^# --- End Zapat/d' || true)
+    if [[ -n "$EXISTING_CRON" ]]; then
+        echo "$EXISTING_CRON" | crontab -
+    else
+        crontab -r 2>/dev/null || true
+    fi
+
+    POLL_SECONDS=$(( ${POLL_INTERVAL_MINUTES:-2} * 60 ))
+
+    # Helper to install a launchd plist
+    install_launchd_job() {
+        local label="$1" interval="$2" script="$3" logfile="$4"
+        local plist="$LAUNCH_AGENTS_DIR/${label}.plist"
+
+        # Unload if already loaded
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+
+        cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>${script}</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>${interval}</integer>
+    <key>WorkingDirectory</key>
+    <string>${SCRIPT_DIR}</string>
+    <key>StandardOutPath</key>
+    <string>${logfile}</string>
+    <key>StandardErrorPath</key>
+    <string>${logfile}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>${HOME}</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+        launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || \
+            launchctl load "$plist" 2>/dev/null || \
+            log_warn "Failed to load $label"
+    }
+
+    # GitHub polling
+    install_launchd_job "com.zapat.poll" "$POLL_SECONDS" \
+        "${SCRIPT_DIR}/bin/poll-github.sh" "${SCRIPT_DIR}/logs/cron-poll.log"
+
+    # Health check every 30 minutes
+    install_launchd_job "com.zapat.health" 1800 \
+        "${SCRIPT_DIR}/bin/zapat-health-cron.sh" "${SCRIPT_DIR}/logs/cron-health.log"
+
+    # Create helper script for health check (needs cd + node)
+    cat > "${SCRIPT_DIR}/bin/zapat-health-cron.sh" <<HEALTHEOF
+#!/bin/bash
+cd "${SCRIPT_DIR}" && node bin/zapat health --auto-fix
+HEALTHEOF
+    chmod +x "${SCRIPT_DIR}/bin/zapat-health-cron.sh"
+
+    log_info "launchd jobs installed (poll every ${POLL_SECONDS}s, health every 30m)"
+    log_info "Scheduled jobs (standup, planning, security) use launchd calendar intervals — install with: bin/install-scheduled-jobs.sh"
+
+else
+    # --- Linux: use cron ---
+    EXISTING_CRON=$(crontab -l 2>/dev/null | sed '/^# --- Zapat/,/^# --- End Zapat/d' || true)
+
+    NEW_CRON="${EXISTING_CRON}
 # --- Zapat (managed by startup.sh) ---
 # Daily standup Mon-Fri 8 AM
 0 8 * * 1-5 /bin/bash ${SCRIPT_DIR}/jobs/daily-standup.sh >> ${SCRIPT_DIR}/logs/cron-daily.log 2>&1
@@ -279,8 +355,9 @@ NEW_CRON="${EXISTING_CRON}
 */30 * * * * cd ${SCRIPT_DIR} && node bin/zapat health --auto-fix >> ${SCRIPT_DIR}/logs/cron-health.log 2>&1
 # --- End Zapat ---"
 
-echo "$NEW_CRON" | crontab -
-log_info "Crontab installed (8 entries)"
+    echo "$NEW_CRON" | crontab -
+    log_info "Crontab installed (8 entries)"
+fi
 
 # --- Step 9: Dashboard Server ---
 echo "[8/9] Starting dashboard server..."
