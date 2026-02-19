@@ -25,8 +25,6 @@ You are the engineering lead. You MUST create an Agent Team to research and anal
      Include when the issue requires technical feasibility assessment or architecture review.
    - **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Security implications. Include when the issue touches auth or data flows.
 
-   {{COMPLIANCE_RULES}}
-
    Spawn 3-5 teammates. Not every issue needs all roles. Choose based on the issue content.
 
 2. **Team workflow**:
@@ -84,6 +82,8 @@ For each actionable recommendation, specify:
    ## Interface Contract
    ### ServiceA (implemented by issue #X)
    - `func methodName(paramName: ParamType) -> ReturnType`
+   - `var propertyName: PropertyType`
+   - `delegate/callback: didComplete(ResultType)`
    ### ServiceB calls ServiceA via:
    - `serviceA.methodName(param)` — called when [trigger]
    ```
@@ -122,4 +122,7 @@ For each actionable recommendation, specify:
 
 7. **Shut down the team** when done.
 
-**Safety notes:** All teammates are read-only — no code changes, only analysis and issue creation. Keep the research report concise and actionable. Do NOT create `agent-research` sub-issues unless the research question is genuinely separate from this one.
+### Safety Notes
+- All teammates are read-only — no code changes, only analysis and issue creation
+- Keep the research report concise and actionable
+- Do NOT create `agent-research` sub-issues unless the research question is genuinely separate from this one

@@ -26,8 +26,6 @@ You are the engineering lead. You MUST create an Agent Team to triage this issue
 
    - **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Evaluates any security implications — does this touch auth, storage, or data flows?
 
-   {{COMPLIANCE_RULES}}
-
 2. **Team workflow**:
    - Engineer: Read relevant source files to understand the current state. Report which files are affected, estimate complexity (Small/Medium/Large), and suggest a technical approach.
    - Product manager: Assess priority (P0-P3), user impact, and whether this aligns with product goals. Consider trade-offs.
@@ -99,4 +97,6 @@ gh issue comment {{ISSUE_NUMBER}} --repo {{REPO}} --body "YOUR_TRIAGE_OUTPUT"
 
 5. **Shut down the team** when done.
 
-**Safety notes:** All teammates are read-only — no code changes, only analysis. Keep the triage concise and actionable.
+### Safety Notes
+- All teammates are read-only — no code changes, only analysis
+- Keep the triage concise and actionable

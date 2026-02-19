@@ -33,8 +33,6 @@ You are the engineering lead. You MUST create an Agent Team to review this PR. D
 
    - **ux-reviewer** (`subagent_type: {{UX_AGENT}}`): Reviews any UI/UX changes for usability, accessibility, friction, and consistency with existing design patterns.
 
-   {{COMPLIANCE_RULES}}
-
 2. **Team workflow**:
    - Platform engineer: Read surrounding source files for context. Check for memory issues, crash risks, error handling gaps, performance concerns. Evaluate architectural fit.
    - Security reviewer: Check for hardcoded secrets/API keys, sensitive data in insecure storage, missing auth checks, injection risks.
@@ -92,4 +90,6 @@ gh pr comment {{PR_NUMBER}} --repo {{REPO}} --body "YOUR_REVIEW_OUTPUT"
 
 6. **Shut down the team** when done.
 
-**Safety notes:** All teammates are read-only — no code changes, only review. Review the CHANGES, not the entire codebase. Don't flag existing patterns.
+### Safety Notes
+- All teammates are read-only — no code changes, only review
+- Review the CHANGES, not the entire codebase. Don't flag existing patterns.

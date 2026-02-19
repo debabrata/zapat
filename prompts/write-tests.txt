@@ -89,10 +89,8 @@ You are a QA test engineer. Your job is to write tests for existing code referen
    gh issue close {{ISSUE_NUMBER}} --repo {{REPO}} --comment "Tests added in PR #<NEW_PR_NUMBER>. Coverage: [brief summary]."
    ```
 
-## Safety Rules
+### Safety Notes
 - NEVER modify production source code — only add test files and test infrastructure
 - NEVER make real API calls — mock all external dependencies
-- NEVER commit secrets or credentials
 - Use realistic but fictional test data
 - Keep test files alongside the code they test (e.g., `__tests__/` or `.test.ts` suffix)
-{{COMPLIANCE_RULES}}

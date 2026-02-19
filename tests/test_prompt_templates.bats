@@ -77,9 +77,30 @@ EOF
 
 @test "no prompt template contains '## Repository Map' (moved to footer)" {
     local real_prompts="$BATS_TEST_DIRNAME/../prompts"
-    for f in implement-issue.txt issue-triage.txt pr-review.txt rework-pr.txt research-issue.txt; do
-        if grep -q '## Repository Map' "$real_prompts/$f"; then
-            fail "Found '## Repository Map' in $f — should be in _shared-footer.txt"
+    for f in "$real_prompts"/*.txt; do
+        [[ "$(basename "$f")" == "_shared-footer.txt" ]] && continue
+        if grep -q '^## Repository Map' "$f"; then
+            fail "Found '## Repository Map' in $(basename "$f") — should be in _shared-footer.txt only"
+        fi
+    done
+}
+
+@test "no prompt template contains '## Safety Rules' (moved to footer)" {
+    local real_prompts="$BATS_TEST_DIRNAME/../prompts"
+    for f in "$real_prompts"/*.txt; do
+        [[ "$(basename "$f")" == "_shared-footer.txt" ]] && continue
+        if grep -q '^## Safety Rules' "$f"; then
+            fail "Found '## Safety Rules' in $(basename "$f") — should be in _shared-footer.txt only"
+        fi
+    done
+}
+
+@test "no prompt template has duplicate COMPLIANCE_RULES (only in footer)" {
+    local real_prompts="$BATS_TEST_DIRNAME/../prompts"
+    for f in "$real_prompts"/*.txt; do
+        [[ "$(basename "$f")" == "_shared-footer.txt" ]] && continue
+        if grep -q '{{COMPLIANCE_RULES}}' "$f"; then
+            fail "Found {{COMPLIANCE_RULES}} in $(basename "$f") — should be in _shared-footer.txt only"
         fi
     done
 }
@@ -93,6 +114,12 @@ EOF
 @test "shared footer contains '## Safety Rules'" {
     local real_prompts="$BATS_TEST_DIRNAME/../prompts"
     run grep '## Safety Rules' "$real_prompts/_shared-footer.txt"
+    assert_success
+}
+
+@test "shared footer contains COMPLIANCE_RULES placeholder" {
+    local real_prompts="$BATS_TEST_DIRNAME/../prompts"
+    run grep '{{COMPLIANCE_RULES}}' "$real_prompts/_shared-footer.txt"
     assert_success
 }
 

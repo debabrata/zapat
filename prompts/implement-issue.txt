@@ -28,8 +28,6 @@ You are the engineering lead. You MUST create an Agent Team to implement this is
 
    - **product-manager** (`subagent_type: {{PRODUCT_AGENT}}`): Validates that the implementation matches the issue requirements and acceptance criteria. Ensures nothing is over-engineered or under-scoped. Reviews the final PR description for clarity.
 
-   {{COMPLIANCE_RULES}}
-
 2. **Planning** (all teammates participate):
    - Builder: Read relevant source files to understand existing patterns. Propose implementation plan.
    - Product manager: Confirm the scope is right — not too broad, not too narrow. Flag any ambiguity.
@@ -87,4 +85,6 @@ You are the engineering lead. You MUST create an Agent Team to implement this is
 
 7. **Shut down the team** when done.
 
-**Safety notes:** NEVER modify files outside the working directory. Keep changes minimal and focused on the issue.
+### Safety Notes
+- NEVER modify files outside the working directory
+- Keep changes minimal and focused on the issue
