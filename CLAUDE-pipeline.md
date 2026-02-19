@@ -9,9 +9,7 @@
 | `agent-work` | Implementation task |
 | `agent-research` | Research and analyze |
 | `agent-write-tests` | Write tests |
-| `zapat-triaging` | Triage in progress |
 | `zapat-implementing` | Implementation in progress |
-| `zapat-researching` | Research in progress |
 | `zapat-review` | Review pending |
 | `zapat-testing` | Tests running |
 | `zapat-rework` | Addressing review feedback |
