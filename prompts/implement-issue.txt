@@ -87,8 +87,4 @@ You are the engineering lead. You MUST create an Agent Team to implement this is
 
 7. **Shut down the team** when done.
 
-**Additional Safety Rules:**
-- NEVER modify files outside the working directory
-- Keep changes minimal and focused on the issue
-<!-- Common rules from _shared-footer.txt -->
-{{SHARED_FOOTER}}
+**Safety notes:** NEVER modify files outside the working directory. Keep changes minimal and focused on the issue.

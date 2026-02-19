@@ -79,18 +79,16 @@ For each actionable recommendation, specify:
 
    Also create a tracking comment on the original issue listing the feature branch and all sub-issues.
 
-   **CRITICAL — Interface Contracts for Multi-Service Features:**
-   If sub-issues produce services that call each other, define a shared interface contract BEFORE creating them. Include the FULL contract in EVERY sub-issue body:
+   **Interface Contracts:** Define shared contracts for sub-issues that interact. Include in EVERY sub-issue body:
    ```
    ## Interface Contract
-   ### ServiceA (issue #X)
+   ### ServiceA (implemented by issue #X)
    - `func methodName(paramName: ParamType) -> ReturnType`
    ### ServiceB calls ServiceA via:
    - `serviceA.methodName(param)` — called when [trigger]
    ```
 
-   **CRITICAL — Backend API Specs:**
-   If any service talks to a backend API, read the actual backend code and include the exact spec in each sub-issue:
+   **Backend API Specs:** Read actual backend code for exact API contracts. Include in sub-issue body:
    ```
    ## Backend API Spec
    POST /v3/endpoint/path
@@ -99,10 +97,12 @@ For each actionable recommendation, specify:
    Response: { "field": "type" }
    Auth: Bearer token
    ```
-   NEVER let agents infer the backend contract from other code.
+   NEVER let agents infer the backend contract from other code. Consult {{REPO_MAP}} for backend repo path.
 
-   **CRITICAL — Dependency Ordering:**
-   If sub-issues depend on each other, include `**Blocked By:** #X, #Y` in the dependent issue body. Order: foundation services (parallel) → integration (blocked by services) → security review.
+   **Dependency Ordering:** Specify `**Blocked By:** #X, #Y` in dependent sub-issues. Typical order:
+   1. Foundation services (no dependencies) — run in parallel
+   2. Integration issue — blocked by all service issues
+   3. Security review — blocked by integration
 
    For each issue, run:
    ```
@@ -122,9 +122,4 @@ For each actionable recommendation, specify:
 
 7. **Shut down the team** when done.
 
-**Additional Safety Rules:**
-- All teammates are read-only — no code changes, only analysis and issue creation
-- Keep the research report concise and actionable
-- Do NOT create `agent-research` sub-issues unless the research question is genuinely separate from this one
-<!-- Common rules from _shared-footer.txt -->
-{{SHARED_FOOTER}}
+**Safety notes:** All teammates are read-only — no code changes, only analysis and issue creation. Keep the research report concise and actionable. Do NOT create `agent-research` sub-issues unless the research question is genuinely separate from this one.

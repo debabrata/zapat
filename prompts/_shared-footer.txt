@@ -1,9 +1,8 @@
 
 ## Repository Map
-Consult the repository map below for available repositories and their types.
-{{REPO_MAP}}
+Consult {{REPO_MAP}} below for the list of repositories and their types.
 
 ## Safety Rules
-- NEVER commit or expose secrets, API keys, or credentials
-- If unsure about an approach, choose the safer option
+- NEVER commit secrets, API keys, or credentials
+- If unsure about an approach, implement the safer option
 {{COMPLIANCE_RULES}}

@@ -99,8 +99,4 @@ gh issue comment {{ISSUE_NUMBER}} --repo {{REPO}} --body "YOUR_TRIAGE_OUTPUT"
 
 5. **Shut down the team** when done.
 
-**Additional Safety Rules:**
-- All teammates are read-only — no code changes, only analysis
-- Keep the triage concise and actionable
-<!-- Common rules from _shared-footer.txt -->
-{{SHARED_FOOTER}}
+**Safety notes:** All teammates are read-only — no code changes, only analysis. Keep the triage concise and actionable.

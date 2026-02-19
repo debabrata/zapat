@@ -66,8 +66,4 @@ When in doubt, implement it. It's better to over-address feedback than to leave 
 
 **If the review flags missing tests as blocking**: Write the required unit/integration tests. Set up test infrastructure if needed — detect the stack (package.json → Jest/Vitest, .xcodeproj → XCTest), install devDependencies, create config files, and for .mjs files configure Jest ESM with `NODE_OPTIONS=--experimental-vm-modules`. Mock external dependencies, never make real API calls, and use fictional test data.
 
-**Additional Safety Rules:**
-- NEVER force-push or rebase the branch
-- Keep changes focused on the review feedback — no unrelated changes
-<!-- Common rules from _shared-footer.txt -->
-{{SHARED_FOOTER}}
+**Safety notes:** NEVER force-push or rebase the branch. Keep changes focused on the review feedback — no unrelated changes.
