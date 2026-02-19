@@ -181,6 +181,9 @@ Set `ENABLE_COMPLIANCE_MODE=true` in `.env` and add a compliance agent persona:
 2. Add `compliance=compliance-advisor` to `config/agents.conf`.
 3. The pipeline will consult the compliance persona during reviews and before auto-merge.
 
+### Prompt Caching
+Claude Code automatically caches static system prompt prefixes (CLAUDE.md + agent personas) between turns. The shared footer (`prompts/_shared-footer.txt`) improves cacheability by ensuring common content is consistent across templates. No additional configuration is needed -- caching is handled by the Claude Code runtime. No `cache_creation_input_tokens` metrics are currently tracked in logs.
+
 ### Shared agent memory
 Agents share knowledge via files in `~/.claude/agent-memory/_shared/`:
 - `DECISIONS.md` -- architectural decisions agents should follow
