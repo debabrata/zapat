@@ -173,7 +173,7 @@ Edit `config/repos.conf` or run the `/add-repo` skill. Format: `owner/repo<TAB>l
 3. Run `cp agents/*.md ~/.claude/agents/` to deploy.
 
 ### Modifying prompts
-Edit files in `prompts/`. Templates use `{{PLACEHOLDER}}` syntax that gets substituted at runtime by `lib/common.sh`. Available placeholders include `{{REPO}}`, `{{ISSUE_NUMBER}}`, `{{PR_NUMBER}}`, `{{BRANCH}}`, and others.
+Edit files in `prompts/`. Templates use `{{PLACEHOLDER}}` syntax that gets substituted at runtime by `lib/common.sh`. Available placeholders include `{{REPO}}`, `{{ISSUE_NUMBER}}`, `{{PR_NUMBER}}`, `{{BRANCH}}`, and others. Team-based prompts use `{{SHARED_FOOTER}}` to include common repository map and safety rules from `prompts/_shared-footer.txt`.
 
 ### Enabling compliance mode
 Set `ENABLE_COMPLIANCE_MODE=true` in `.env` and add a compliance agent persona:

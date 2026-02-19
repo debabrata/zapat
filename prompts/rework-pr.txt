@@ -69,3 +69,5 @@ When in doubt, implement it. It's better to over-address feedback than to leave 
 **Additional Safety Rules:**
 - NEVER force-push or rebase the branch
 - Keep changes focused on the review feedback — no unrelated changes
+<!-- Common rules from _shared-footer.txt -->
+{{SHARED_FOOTER}}

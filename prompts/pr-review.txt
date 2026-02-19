@@ -95,3 +95,5 @@ gh pr comment {{PR_NUMBER}} --repo {{REPO}} --body "YOUR_REVIEW_OUTPUT"
 **Additional Safety Rules:**
 - All teammates are read-only — no code changes, only review
 - Review the CHANGES, not the entire codebase. Don't flag existing patterns.
+<!-- Common rules from _shared-footer.txt -->
+{{SHARED_FOOTER}}

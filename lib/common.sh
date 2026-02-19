@@ -628,12 +628,15 @@ substitute_prompt() {
     local content
     content=$(cat "$template")
 
-    # Append shared footer if it exists (resolved relative to the prompts directory)
-    local footer_file
-    footer_file="$(dirname "$template")/_shared-footer.txt"
-    if [[ -f "$footer_file" ]]; then
-        content="${content}
-$(cat "$footer_file")"
+    # Replace {{SHARED_FOOTER}} with contents of _shared-footer.txt (opt-in only)
+    if [[ "$content" == *'{{SHARED_FOOTER}}'* ]]; then
+        local footer_file
+        footer_file="$(dirname "$template")/_shared-footer.txt"
+        if [[ -f "$footer_file" ]]; then
+            local footer_content
+            footer_content=$(cat "$footer_file")
+            content="${content//\{\{SHARED_FOOTER\}\}/${footer_content}}"
+        fi
     fi
 
     # Auto-inject standard variables

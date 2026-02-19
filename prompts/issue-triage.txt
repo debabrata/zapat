@@ -102,3 +102,5 @@ gh issue comment {{ISSUE_NUMBER}} --repo {{REPO}} --body "YOUR_TRIAGE_OUTPUT"
 **Additional Safety Rules:**
 - All teammates are read-only — no code changes, only analysis
 - Keep the triage concise and actionable
+<!-- Common rules from _shared-footer.txt -->
+{{SHARED_FOOTER}}

@@ -126,3 +126,5 @@ For each actionable recommendation, specify:
 - All teammates are read-only — no code changes, only analysis and issue creation
 - Keep the research report concise and actionable
 - Do NOT create `agent-research` sub-issues unless the research question is genuinely separate from this one
+<!-- Common rules from _shared-footer.txt -->
+{{SHARED_FOOTER}}

@@ -1,6 +1,6 @@
 
-
 ## Repository Map
+Consult the repository map below for available repositories and their types.
 {{REPO_MAP}}
 
 ## Safety Rules

@@ -25,9 +25,9 @@ teardown() {
 
 # --- Shared Footer Tests ---
 
-@test "substitute_prompt appends shared footer when _shared-footer.txt exists" {
-    # Create a template
-    echo "Hello {{NAME}}" > "$BATS_TEST_TMPDIR/prompts/test-template.txt"
+@test "substitute_prompt replaces {{SHARED_FOOTER}} with footer contents" {
+    # Create a template with opt-in marker
+    printf "Hello {{NAME}}\n{{SHARED_FOOTER}}" > "$BATS_TEST_TMPDIR/prompts/test-template.txt"
 
     # Create a shared footer
     echo "---FOOTER---" > "$BATS_TEST_TMPDIR/prompts/_shared-footer.txt"
@@ -38,9 +38,22 @@ teardown() {
     assert_output --partial "---FOOTER---"
 }
 
-@test "substitute_prompt works without _shared-footer.txt (graceful fallback)" {
-    # Create a template, no footer file
+@test "substitute_prompt does NOT inject footer without {{SHARED_FOOTER}} marker" {
+    # Create a template WITHOUT the marker
     echo "Hello {{NAME}}" > "$BATS_TEST_TMPDIR/prompts/test-template.txt"
+
+    # Create a shared footer
+    echo "---FOOTER---" > "$BATS_TEST_TMPDIR/prompts/_shared-footer.txt"
+
+    run substitute_prompt "$BATS_TEST_TMPDIR/prompts/test-template.txt" "NAME=World"
+    assert_success
+    assert_output --partial "Hello World"
+    refute_output --partial "---FOOTER---"
+}
+
+@test "substitute_prompt works when footer file is missing (graceful fallback)" {
+    # Create a template with marker but no footer file
+    printf "Hello {{NAME}}\n{{SHARED_FOOTER}}" > "$BATS_TEST_TMPDIR/prompts/test-template.txt"
 
     # Ensure no footer file exists
     rm -f "$BATS_TEST_TMPDIR/prompts/_shared-footer.txt"
@@ -51,8 +64,8 @@ teardown() {
 }
 
 @test "substitute_prompt applies placeholder substitution to footer content" {
-    # Create a template
-    echo "Template for {{REPO}}" > "$BATS_TEST_TMPDIR/prompts/test-template.txt"
+    # Create a template with marker
+    printf "Template for {{REPO}}\n{{SHARED_FOOTER}}" > "$BATS_TEST_TMPDIR/prompts/test-template.txt"
 
     # Create footer with a placeholder
     echo "Footer: {{REPO}}" > "$BATS_TEST_TMPDIR/prompts/_shared-footer.txt"
@@ -64,8 +77,8 @@ teardown() {
 }
 
 @test "substitute_prompt footer preserves auto-injected variables" {
-    # Create a template with no special placeholders
-    echo "Main content" > "$BATS_TEST_TMPDIR/prompts/test-template.txt"
+    # Create a template with marker
+    printf "Main content\n{{SHARED_FOOTER}}" > "$BATS_TEST_TMPDIR/prompts/test-template.txt"
 
     # Create footer with auto-injected placeholder
     printf "\n## Repository Map\n{{REPO_MAP}}" > "$BATS_TEST_TMPDIR/prompts/_shared-footer.txt"
