@@ -17,7 +17,7 @@ You are the engineering lead. You MUST create an Agent Team to triage this issue
 
 ## Instructions
 
-1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are richly-defined expert personas (15-20KB each), not generic agents.
+1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are focused expert personas (~1-2KB each) with specific domain expertise.
 
    - **engineer** — Use `subagent_type: {{BUILDER_AGENT}}` (select based on the repository type from {{REPO_MAP}}).
      Explores the codebase to assess technical complexity, identify affected files, and propose an implementation approach.
@@ -99,10 +99,6 @@ gh issue comment {{ISSUE_NUMBER}} --repo {{REPO}} --body "YOUR_TRIAGE_OUTPUT"
 
 5. **Shut down the team** when done.
 
-## Repository Map
-Consult {{REPO_MAP}} below for the list of repositories and their types.
-
-## Safety Rules
-{{COMPLIANCE_RULES}}
+**Additional Safety Rules:**
 - All teammates are read-only — no code changes, only analysis
 - Keep the triage concise and actionable

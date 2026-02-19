@@ -1,0 +1,9 @@
+
+
+## Repository Map
+{{REPO_MAP}}
+
+## Safety Rules
+- NEVER commit or expose secrets, API keys, or credentials
+- If unsure about an approach, choose the safer option
+{{COMPLIANCE_RULES}}

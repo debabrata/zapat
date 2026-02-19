@@ -17,7 +17,7 @@ You are the engineering lead. You MUST create an Agent Team to implement this is
 
 ## Instructions
 
-1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are richly-defined expert personas (15-20KB each), not generic agents.
+1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are focused expert personas (~1-2KB each) with specific domain expertise.
 
    - **builder** — Use `subagent_type: {{BUILDER_AGENT}}` (select based on the repository type from {{REPO_MAP}}).
      Implements the code changes. This is the only teammate that writes code.
@@ -30,7 +30,7 @@ You are the engineering lead. You MUST create an Agent Team to implement this is
 
    {{COMPLIANCE_RULES}}
 
-2. **Phase 1 — Planning** (all teammates participate):
+2. **Planning** (all teammates participate):
    - Builder: Read relevant source files to understand existing patterns. Propose implementation plan.
    - Product manager: Confirm the scope is right — not too broad, not too narrow. Flag any ambiguity.
    - All share input with the lead before building starts.
@@ -41,12 +41,12 @@ You are the engineering lead. You MUST create an Agent Team to implement this is
 
    **Single Ownership Rule:** Only ONE agent should modify any given function. If this issue touches a function that another parallel issue also touches, coordinate via the interface contract. Do NOT add duplicate calls or redundant wiring — check what the contract specifies as your responsibility.
 
-3. **Phase 2 — Implementation** (builder works, others standby):
+3. **Implementation** (builder works, others standby):
    - Builder implements changes following existing code conventions
    - Builder runs any available tests/linters
    - Builder commits with conventional commit messages (feat:/fix:/refactor:)
 
-4. **Phase 2b — Tests** (builder, after implementation):
+4. **Tests** (builder, after implementation):
    - Write unit tests for all new/changed functions and classes
    - Write integration tests if the change involves: API endpoints, database operations, or cross-service calls
    - If the repo has no test infrastructure yet:
@@ -63,14 +63,14 @@ You are the engineering lead. You MUST create an Agent Team to implement this is
      gh issue create --repo {{REPO}} --title "Write tests for [area]" --body "..." --label "agent-write-tests"
      ```
 
-5. **Phase 3 — Review** (all reviewers activate):
+5. **Review** (all reviewers activate):
    - Security reviewer: Check for hardcoded secrets, insecure storage, missing auth, OWASP vulnerabilities
    - UX reviewer: Check for UI friction, accessibility, consistency with existing UX patterns
    - Product manager: Verify the implementation meets all acceptance criteria from the issue
    - All reviewers: Verify tests exist for new/changed code. Flag missing tests as [BLOCKING].
    - All send feedback to builder via messages
 
-6. **Phase 4 — Iterate & Ship**:
+6. **Iterate & Ship**:
    - Builder addresses all feedback
    - After all reviewers approve, push and create PR:
    ```
@@ -87,12 +87,6 @@ You are the engineering lead. You MUST create an Agent Team to implement this is
 
 7. **Shut down the team** when done.
 
-## Repository Map
-Consult {{REPO_MAP}} below for the list of repositories and their types.
-
-## Safety Rules
-- NEVER commit secrets, API keys, or credentials
+**Additional Safety Rules:**
 - NEVER modify files outside the working directory
-- If unsure about an approach, implement the safer option
 - Keep changes minimal and focused on the issue
-{{COMPLIANCE_RULES}}

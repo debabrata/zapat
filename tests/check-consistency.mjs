@@ -280,16 +280,29 @@ const promptToTrigger = {
   'prompts/test-pr.txt': 'triggers/on-test-pr.sh',
 };
 
+// Include placeholders from the shared footer (appended by substitute_prompt)
+const sharedFooterPath = 'prompts/_shared-footer.txt';
+const sharedFooterPlaceholders = new Set();
+if (fileExists(sharedFooterPath)) {
+  const footerContent = readFile(sharedFooterPath);
+  for (const match of footerContent.matchAll(/\{\{(\w+)\}\}/g)) {
+    sharedFooterPlaceholders.add(match[1]);
+  }
+}
+
 for (const [promptPath, triggerPath] of Object.entries(promptToTrigger)) {
   if (!fileExists(promptPath) || !fileExists(triggerPath)) continue;
 
   const promptContent = readFile(promptPath);
   const triggerContent = readFile(triggerPath);
 
-  // Extract all {{PLACEHOLDER}} tokens from the prompt
+  // Extract all {{PLACEHOLDER}} tokens from the prompt + shared footer
   const placeholders = new Set();
   for (const match of promptContent.matchAll(/\{\{(\w+)\}\}/g)) {
     placeholders.add(match[1]);
+  }
+  for (const ph of sharedFooterPlaceholders) {
+    placeholders.add(ph);
   }
 
   // Extract variables passed via substitute_prompt "KEY=..." in the trigger.

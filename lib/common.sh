@@ -628,6 +628,14 @@ substitute_prompt() {
     local content
     content=$(cat "$template")
 
+    # Append shared footer if it exists (resolved relative to the prompts directory)
+    local footer_file
+    footer_file="$(dirname "$template")/_shared-footer.txt"
+    if [[ -f "$footer_file" ]]; then
+        content="${content}
+$(cat "$footer_file")"
+    fi
+
     # Auto-inject standard variables
     read_agents_conf "" 2>/dev/null || true
     local repo_map
