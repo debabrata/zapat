@@ -46,7 +46,6 @@ You are leading a test infrastructure project. Your goal is to set up automated 
 - **web**: Component rendering, API integration, form validation
 - **extension**: Content script tests, background worker tests, popup UI tests
 
-## Safety Rules
+### Safety Notes
 - NEVER modify production code to make tests pass — adapt tests to the code
 - Test fixtures should use realistic but fictional data
-{{COMPLIANCE_RULES}}

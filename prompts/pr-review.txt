@@ -24,7 +24,7 @@
 ## Workflow
 ## Instructions
 
-1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are richly-defined expert personas (15-20KB each), not generic agents.
+1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are focused expert personas (~1-2KB each) with specific domain expertise.
 
    - **platform-engineer** — Use `subagent_type: {{BUILDER_AGENT}}` (select based on the repository type from {{REPO_MAP}}).
      Reviews code quality, architecture, patterns, performance, and correctness. Reads the surrounding codebase to understand context.
@@ -95,10 +95,6 @@ gh pr comment {{PR_NUMBER}} --repo {{REPO}} --body "YOUR_REVIEW_OUTPUT"
 
 6. **Shut down the team** when done.
 
-## Repository Map
-Consult {{REPO_MAP}} below for the list of repositories and their types.
-
-## Safety Rules
-{{COMPLIANCE_RULES}}
+### Safety Notes
 - All teammates are read-only — no code changes, only review
 - Review the CHANGES, not the entire codebase. Don't flag existing patterns.

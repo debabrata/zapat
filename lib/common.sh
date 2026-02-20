@@ -618,6 +618,16 @@ load_project_context() {
 
 # --- Prompt Substitution ---
 
+# Prompt Caching Notes:
+# Claude Code automatically caches static system prompt prefixes. The generated
+# prompt becomes part of the system prompt, so content order matters:
+#   - Static instructions (template text, shared footer) → cached across invocations
+#   - Dynamic placeholders ({{ISSUE_BODY}}, {{PR_DIFF}}) → vary per invocation
+# Templates should keep static instructions first and dynamic content (issue body,
+# PR diff, etc.) early in the details section. The shared footer (_shared-footer.txt)
+# is appended identically across all invocations, maximizing cache hits for the
+# trailing portion of the prompt.
+
 # Replace {{PLACEHOLDER}} in a file with values
 # Auto-injects: REPO_MAP, BUILDER_AGENT, SECURITY_AGENT, PRODUCT_AGENT, UX_AGENT,
 #               ORG_NAME, COMPLIANCE_RULES, PROJECT_CONTEXT, SUBAGENT_MODEL
@@ -627,6 +637,13 @@ substitute_prompt() {
     shift
     local content
     content=$(cat "$template")
+
+    # Append shared footer if it exists in the same directory
+    local footer_file="$(dirname "$template")/_shared-footer.txt"
+    if [[ -f "$footer_file" ]]; then
+        content="${content}
+$(cat "$footer_file")"
+    fi
 
     # Auto-inject standard variables
     read_agents_conf "" 2>/dev/null || true

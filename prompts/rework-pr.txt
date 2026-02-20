@@ -21,7 +21,7 @@
 ## Workflow
 ## Instructions
 
-1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are richly-defined expert personas (15-20KB each), not generic agents.
+1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are focused expert personas (~1-2KB each) with specific domain expertise.
 
    - **builder** — Use `subagent_type: {{BUILDER_AGENT}}` (select based on the repository type from {{REPO_MAP}}).
      Addresses ALL review feedback by making code changes. This is the only teammate that writes code.
@@ -82,11 +82,6 @@ When in doubt, implement it. It's better to over-address feedback than to leave 
 
 **If the review flags missing tests as blocking**: Write the required unit/integration tests. Set up test infrastructure if needed — detect the stack (package.json → Jest/Vitest, .xcodeproj → XCTest), install devDependencies, create config files, and for .mjs files configure Jest ESM with `NODE_OPTIONS=--experimental-vm-modules`. Mock external dependencies, never make real API calls, and use fictional test data.
 
-## Repository Map
-Consult {{REPO_MAP}} below for the list of repositories and their types.
-
-## Safety Rules
-- NEVER commit secrets, API keys, or credentials
+### Safety Notes
 - NEVER force-push or rebase the branch
 - Keep changes focused on the review feedback — no unrelated changes
-{{COMPLIANCE_RULES}}

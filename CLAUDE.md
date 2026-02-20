@@ -174,13 +174,16 @@ Edit `config/repos.conf` or run the `/add-repo` skill. Format: `owner/repo<TAB>l
 3. Run `cp agents/*.md ~/.claude/agents/` to deploy.
 
 ### Modifying prompts
-Edit files in `prompts/`. Templates use `{{PLACEHOLDER}}` syntax that gets substituted at runtime by `lib/common.sh`. Available placeholders include `{{REPO}}`, `{{ISSUE_NUMBER}}`, `{{PR_NUMBER}}`, `{{BRANCH}}`, and others.
+Edit files in `prompts/`. Templates use `{{PLACEHOLDER}}` syntax that gets substituted at runtime by `lib/common.sh`. Available placeholders include `{{REPO}}`, `{{ISSUE_NUMBER}}`, `{{PR_NUMBER}}`, `{{BRANCH}}`, and others. Common repository map and safety rules are auto-appended from `prompts/_shared-footer.txt`.
 
 ### Enabling compliance mode
 Set `ENABLE_COMPLIANCE_MODE=true` in `.env` and add a compliance agent persona:
 1. Create `agents/compliance-advisor.md` with domain-specific rules.
 2. Add `compliance=compliance-advisor` to `config/agents.conf`.
 3. The pipeline will consult the compliance persona during reviews and before auto-merge.
+
+### Prompt Caching
+Claude Code automatically caches static system prompt prefixes (CLAUDE.md + agent personas) between turns. The shared footer (`prompts/_shared-footer.txt`) improves cacheability by ensuring common content is consistent across templates. No additional configuration is needed -- caching is handled by the Claude Code runtime. No `cache_creation_input_tokens` metrics are currently tracked in logs.
 
 ### Shared agent memory
 Agents share knowledge via files in `~/.claude/agent-memory/_shared/`:
