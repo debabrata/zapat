@@ -678,7 +678,7 @@ substitute_prompt() {
 
 --- DIFF TRUNCATED ---
 Showing first ~${shown_lines} lines of ${total_lines} total lines (~${max_diff_chars} of ${total_chars} total chars).
-⚠️  Security and code quality reviewers MUST fetch the full diff before reviewing:
+⚠️  All reviewers MUST fetch the full diff before reviewing:
   gh pr diff ${pr_number_val} --repo ${repo_val}"
         fi
         capped_args+=("${key}=${value}")
