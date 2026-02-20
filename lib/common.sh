@@ -557,8 +557,11 @@ cleanup_readonly_worktree() {
 
 # Read agents.conf for the current project and set role variables
 # Sets: BUILDER_AGENT, SECURITY_AGENT, PRODUCT_AGENT, UX_AGENT, plus any custom roles
+# Optional second parameter: repo_type (e.g., "ios", "web", "backend", "extension")
+# When provided, lines like "builder.ios=ios-engineer" override the default "builder=engineer"
 read_agents_conf() {
     local slug="${1:-${CURRENT_PROJECT:-default}}"
+    local repo_type="${2:-}"
     local conf
     conf="$(project_config_dir "$slug")/agents.conf"
     if [[ ! -f "$conf" ]]; then
@@ -569,10 +572,14 @@ read_agents_conf() {
         UX_AGENT="ux-reviewer"
         return 0
     fi
+
+    # PASS 1: Load role=persona defaults
     while IFS='=' read -r role persona; do
         [[ -z "$role" || "$role" =~ ^[[:space:]]*# ]] && continue
         role=$(echo "$role" | xargs)
         persona=$(echo "$persona" | xargs)
+        # Skip repo-type overrides (contain a dot) in pass 1
+        [[ "$role" == *.* ]] && continue
         case "$role" in
             builder)    BUILDER_AGENT="$persona" ;;
             security)   SECURITY_AGENT="$persona" ;;
@@ -582,6 +589,29 @@ read_agents_conf() {
             *)          export "AGENT_${role^^}=$persona" ;;
         esac
     done < "$conf"
+
+    # PASS 2: Overlay role.<repo_type>=persona overrides
+    if [[ -n "$repo_type" ]]; then
+        while IFS='=' read -r role persona; do
+            [[ -z "$role" || "$role" =~ ^[[:space:]]*# ]] && continue
+            role=$(echo "$role" | xargs)
+            persona=$(echo "$persona" | xargs)
+            # Only process lines matching role.<repo_type>
+            [[ "$role" != *.* ]] && continue
+            local base_role="${role%%.*}"
+            local override_type="${role#*.}"
+            [[ "$override_type" != "$repo_type" ]] && continue
+            case "$base_role" in
+                builder)    BUILDER_AGENT="$persona" ;;
+                security)   SECURITY_AGENT="$persona" ;;
+                product)    PRODUCT_AGENT="$persona" ;;
+                ux)         UX_AGENT="$persona" ;;
+                compliance) COMPLIANCE_AGENT="$persona" ;;
+                *)          export "AGENT_${base_role^^}=$persona" ;;
+            esac
+        done < "$conf"
+    fi
+
     # Ensure defaults for any unset roles
     BUILDER_AGENT="${BUILDER_AGENT:-engineer}"
     SECURITY_AGENT="${SECURITY_AGENT:-security-reviewer}"
@@ -644,7 +674,7 @@ load_project_context() {
 
 # Replace {{PLACEHOLDER}} in a file with values
 # Auto-injects: REPO_MAP, BUILDER_AGENT, SECURITY_AGENT, PRODUCT_AGENT, UX_AGENT,
-#               ORG_NAME, COMPLIANCE_RULES, PROJECT_CONTEXT, SUBAGENT_MODEL
+#               ORG_NAME, COMPLIANCE_RULES, PROJECT_CONTEXT, SUBAGENT_MODEL, REPO_TYPE
 # Usage: substitute_prompt "template.txt" "DATE=2026-02-06" "ISSUE_NUMBER=42"
 substitute_prompt() {
     local template="$1"
@@ -708,7 +738,17 @@ Showing first ~${shown_lines} lines of ${total_lines} total lines (~${max_diff_c
     fi
 
     # PASS 2: Auto-inject standard variables (resolves all remaining {{PLACEHOLDER}} tokens)
-    read_agents_conf "" 2>/dev/null || true
+    # Extract REPO_TYPE from explicit args for repo-type-aware agent selection
+    local _repo_type=""
+    if [[ ${#capped_args[@]} -gt 0 ]]; then
+        for pair in "${capped_args[@]}"; do
+            if [[ "${pair%%=*}" == "REPO_TYPE" ]]; then
+                _repo_type="${pair#*=}"
+                break
+            fi
+        done
+    fi
+    read_agents_conf "" "$_repo_type" 2>/dev/null || true
     local repo_map
     repo_map=$(_generate_repo_map)
     local compliance_rules
@@ -726,6 +766,7 @@ Showing first ~${shown_lines} lines of ${total_lines} total lines (~${max_diff_c
     content="${content//\{\{PROJECT_CONTEXT\}\}/${project_context}}"
     content="${content//\{\{PROJECT_NAME\}\}/${CURRENT_PROJECT:-default}}"
     content="${content//\{\{SUBAGENT_MODEL\}\}/${_subagent_model}}"
+    content="${content//\{\{REPO_TYPE\}\}/${_repo_type}}"
 
     echo "$content"
 }

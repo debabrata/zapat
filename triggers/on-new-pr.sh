@@ -66,9 +66,11 @@ PR_DIFF=$(gh pr diff "$PR_NUMBER" --repo "$REPO" 2>/dev/null || echo "Unable to 
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -138,7 +140,8 @@ FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/pr-review.txt" \
     "PR_DIFF=$PR_DIFF" \
     "COMPLEXITY=$COMPLEXITY" \
     "TASK_ASSESSMENT=$TASK_ASSESSMENT" \
-    "MENTION_CONTEXT=$MENTION_BLOCK")
+    "MENTION_CONTEXT=$MENTION_BLOCK" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file (avoids tmux send-keys escaping issues)
 PROMPT_FILE=$(mktemp)

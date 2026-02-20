@@ -84,9 +84,11 @@ ${ISSUE_COMMENTS}"
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -161,7 +163,8 @@ FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/rework-pr.txt" \
     "COMPLEXITY=$COMPLEXITY" \
     "TASK_ASSESSMENT=$TASK_ASSESSMENT" \
     "REVIEW_COMMENTS=$ALL_FEEDBACK" \
-    "PR_REVIEWS=$PR_REVIEWS")
+    "PR_REVIEWS=$PR_REVIEWS" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file
 PROMPT_FILE=$(mktemp)

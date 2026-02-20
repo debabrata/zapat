@@ -286,7 +286,80 @@ Show the generated `config/project-context.txt` and ask: "Does this look right? 
 
 ---
 
-## Step 4 — Auto-Merge
+## Step 4 — Agent Team
+
+Based on the repos collected in Step 3, propose repo-type-aware agent specializations. The goal is to match each repo type with the best-fit agent persona.
+
+### Show default team
+
+Present:
+```
+Your default agent team:
+  builder:    engineer (general-purpose)
+  security:   security-reviewer
+  product:    product-manager
+  ux:         ux-reviewer
+```
+
+### Propose specializations
+
+For each repo type detected in Step 3, propose a specialization. Only propose for types that have a natural specialist:
+
+- **ios** → "I noticed you have an iOS repo. Would you like a specialized iOS/SwiftUI engineer (`ios-engineer`) for iOS work instead of the generic engineer?"
+- **web** → "I noticed you have a web repo. Would you like a specialized fullstack engineer (`fullstack-engineer`) for web work?"
+- **extension** → "I noticed you have a Chrome extension repo. Would you like a specialized extension engineer (`chrome-extension-emr`) for extension work?"
+- **backend** → "I noticed you have a backend repo. Would you like a specialized backend engineer (`backend-engineer`) for backend work?"
+
+Ask about all detected types in a single question (multi-select style). For types not listed above (e.g., "other"), skip.
+
+### Domain compliance
+
+Ask: **"Does your project have domain-specific compliance needs?"**
+
+Offer common options:
+- Healthcare (HIPAA) → adds `compliance=hipaa-compliance` and optionally `security.ios=hipaa-security-consultant` etc.
+- Finance (SOX/PCI) → adds `compliance=finance-compliance`
+- None / I'll configure later
+
+### Generate overrides
+
+For each accepted specialization:
+
+1. Write the `role.type=persona` line to `agents.conf`. For example, if the user accepts iOS specialization:
+   ```
+   builder.ios=ios-engineer
+   ```
+
+2. Check if the persona file exists in `$ZAPAT_HOME/agents/`. If not, create a minimal template:
+   ```markdown
+   # <Persona Name>
+
+   You are a specialized <description> agent for the Zapat pipeline.
+
+   ## Expertise
+   - <domain-specific expertise>
+
+   ## Guidelines
+   - Follow the project's coding standards
+   - Write tests for new functionality
+   - Consider security implications
+   ```
+
+3. Copy any new persona files to `~/.claude/agents/`.
+
+### Confirmation
+
+Show the final agent team configuration:
+```
+Agent team configured:
+  Default:     engineer, security-reviewer, product-manager, ux-reviewer
+  iOS repos:   ios-engineer (builder), hipaa-security-consultant (security)
+  Web repos:   fullstack-engineer (builder)
+```
+
+---
+
+## Step 5 — Auto-Merge
 
 Ask: **"Should Zapat auto-merge PRs that pass code review and tests?"**
 
@@ -297,7 +370,7 @@ Explain: "When enabled, low-risk PRs merge immediately and medium-risk PRs merge
 
 ---
 
-## Step 5 — Review Defaults and Generate
+## Step 6 — Review Defaults and Generate
 
 Before generating configuration, show the user all defaults that will be applied and give them a chance to change any. **All paths below are relative to `$ZAPAT_HOME`.**
 
@@ -317,6 +390,7 @@ Here's how Zapat will be configured. Let me know if you'd like to change anythin
   Timezone:           <auto-detected>
   Notifications:      none (add Slack webhook later in .env)
   Agent team:         engineer, security, product, ux
+  Agent overrides:    <list any repo-type overrides from Step 4, or "none">
   Scheduled tasks:    daily standup, weekly planning, weekly security scan
   Budget caps:        $5 standup / $15 planning / $25 strategy / $15 security
 ```
@@ -454,6 +528,7 @@ Zapat is running.
   Main repo:        acme-corp/backend
   Other repos:      2 additional
   Agent team:       engineer, security, product, ux
+  Agent overrides:  <list any repo-type overrides, or "none">
   Model:            Opus 4.6
   Auto-merge:       <enabled/disabled>
   Dashboard:        http://localhost:8080

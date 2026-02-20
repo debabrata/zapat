@@ -48,9 +48,11 @@ fi
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)

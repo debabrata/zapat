@@ -58,9 +58,11 @@ ISSUE_LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | join(", ")' 2>/dev
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -100,7 +102,8 @@ FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/research-issue.txt" \
     "ISSUE_NUMBER=$ISSUE_NUMBER" \
     "ISSUE_TITLE=$ISSUE_TITLE" \
     "ISSUE_BODY=$ISSUE_BODY" \
-    "ISSUE_LABELS=$ISSUE_LABELS")
+    "ISSUE_LABELS=$ISSUE_LABELS" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file (avoids tmux send-keys escaping issues)
 PROMPT_FILE=$(mktemp)
