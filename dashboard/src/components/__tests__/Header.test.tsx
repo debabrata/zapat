@@ -38,7 +38,7 @@ describe('Header', () => {
     // Find the decorative divider
     const divider = container.querySelector('[aria-hidden="true"]')
     expect(divider).toBeInTheDocument()
-    expect(divider).toHaveClass('h-5', 'w-px', 'lg:hidden')
+    expect(divider).toHaveClass('h-6', 'w-px', 'lg:hidden')
     expect(divider).toHaveClass('bg-zinc-300')
     expect(divider).toHaveClass('dark:bg-zinc-600')
   })

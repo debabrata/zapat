@@ -66,6 +66,22 @@ describe('ProjectSelector', () => {
     expect(button).toHaveClass('border', 'border-zinc-200', 'dark:border-zinc-700', 'lg:border-transparent')
   })
 
+  it('button has adequate touch target height on mobile', () => {
+    render(<ProjectSelector />)
+
+    const button = screen.getByRole('button', { name: /Project: All Projects/i })
+    expect(button).toHaveClass('py-2')
+  })
+
+  it('dropdown uses viewport-aware max-height', () => {
+    render(<ProjectSelector />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Project: All Projects/i }))
+
+    const listbox = screen.getByRole('listbox')
+    expect(listbox).toHaveClass('max-h-[min(280px,calc(100dvh-4rem))]')
+  })
+
   it('renders a static label (no dropdown) when there is only one project', () => {
     mockUseProject.mockReturnValue({
       project: undefined,

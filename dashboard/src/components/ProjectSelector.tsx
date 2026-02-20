@@ -140,7 +140,7 @@ export function ProjectSelector({ className }: { className?: string }) {
         aria-controls={open ? listboxId : undefined}
         aria-label={`Project: ${projectName}`}
         className={cn(
-          'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition',
+          'flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm font-medium transition',
           'border border-zinc-200 dark:border-zinc-700 lg:border-transparent',
           'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100',
           'dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-800',
@@ -158,7 +158,7 @@ export function ProjectSelector({ className }: { className?: string }) {
           role="listbox"
           aria-label="Select project"
           aria-activedescendant={focusIndex >= 0 ? `project-option-${focusIndex}` : undefined}
-          className="absolute right-0 lg:left-0 lg:right-auto top-full z-50 mt-1 min-w-[180px] max-h-[280px] overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
+          className="absolute right-0 lg:left-0 lg:right-auto top-full z-50 mt-1 min-w-[180px] max-h-[min(280px,calc(100dvh-4rem))] overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
         >
           {options.map((opt, idx) => {
             const isSelected = opt.slug === project || (!opt.slug && !project)
