@@ -4,8 +4,7 @@ IMPORTANT: Your ENTIRE response must be the structured report below. Do NOT summ
 
 Analyze recent activity across all repositories and produce a concise standup report.
 
-Repos to check:
-{{REPO_MAP}}
+Repos to check (see Repository Map section below).
 
 For each repo, run:
 - `git -C <path> log --since="yesterday" --oneline` to see recent commits

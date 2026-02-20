@@ -60,8 +60,7 @@ gh pr comment {{PR_NUMBER}} --repo {{REPO}} --body "## Test Results — PR #{{PR
    If any tests fail, add: `<!-- agent-test-failed -->`
    These HTML comments are machine-readable markers for the auto-merge gate.
 
-## Safety Rules
+### Safety Notes
 - NEVER modify test files or source code — only run tests and report results
 - If tests require fixtures, use synthetic data
 - If tests take longer than 10 minutes, abort and report timeout
-{{COMPLIANCE_RULES}}
