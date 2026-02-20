@@ -30,7 +30,7 @@ ITEM_STATE_FILE=$(create_item_state "$REPO" "pr" "$PR_NUMBER" "running" "$PROJEC
 # --- Concurrency Slot ---
 SLOT_DIR="$SCRIPT_DIR/state/triage-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_TRIAGE:-${MAX_CONCURRENT_WORK:-10}}
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "review" "$REPO" "$PR_NUMBER"; then
     log_warn "At capacity ($MAX_CONCURRENT concurrent triage sessions), deferring PR #${PR_NUMBER} (will retry in ~5 min)"
     [[ -n "$ITEM_STATE_FILE" && -f "$ITEM_STATE_FILE" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0

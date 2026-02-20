@@ -403,18 +403,29 @@ release_lock() {
 # --- Slot-based Concurrency ---
 
 # Acquire a concurrency slot. Allows up to MAX concurrent sessions.
-# Usage: acquire_slot "state/agent-work-slots" 10
+# Usage: acquire_slot "state/agent-work-slots" 10 [job_type] [repo] [number]
 # Returns 0 on success (slot file path in $SLOT_FILE), 1 if at capacity.
+# Slot file is JSON: {"pid":…,"job_type":…,"repo":…,"number":…,"started_at":…}
 acquire_slot() {
     local slot_dir="$1"
     local max_concurrent="${2:-10}"
+    local job_type="${3:-unknown}"
+    local repo="${4:-}"
+    local number="${5:-}"
     mkdir -p "$slot_dir"
 
     # Clean up stale slots (process no longer running)
     for slot in "$slot_dir"/slot-*.pid; do
         [[ -f "$slot" ]] || continue
         local pid
-        pid=$(cat "$slot" 2>/dev/null || echo "")
+        # Support both legacy plain-PID files and new JSON files
+        local content
+        content=$(cat "$slot" 2>/dev/null || echo "")
+        if echo "$content" | grep -q '^{'; then
+            pid=$(echo "$content" | grep -o '"pid":[0-9]*' | grep -o '[0-9]*')
+        else
+            pid="$content"
+        fi
         if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
             log_warn "Removing stale slot $slot (pid: $pid)"
             rm -f "$slot"
@@ -429,9 +440,12 @@ acquire_slot() {
         return 1
     fi
 
-    # Create slot
+    # Create slot with metadata
     SLOT_FILE="$slot_dir/slot-$$.pid"
-    echo $$ > "$SLOT_FILE"
+    local started_at
+    started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    printf '{"pid":%s,"job_type":"%s","repo":"%s","number":"%s","started_at":"%s"}\n' \
+        "$$" "$job_type" "$repo" "$number" "$started_at" > "$SLOT_FILE"
     log_info "Slot acquired: $SLOT_FILE ($((active + 1))/$max_concurrent active)"
     return 0
 }

@@ -47,12 +47,21 @@ export interface HealthCheck {
   message: string
 }
 
+export interface SlotInfo {
+  pid: number
+  job_type: string
+  repo: string
+  number: string
+  started_at: string
+}
+
 export interface SystemStatus {
   healthy: boolean
   sessionExists: boolean
   windowCount: number
   activeSlots: number
   maxSlots: number
+  slots: SlotInfo[]
   checks: HealthCheck[]
 }
 

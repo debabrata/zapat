@@ -6,6 +6,7 @@ import type {
   MetricEntry,
   HealthCheck,
   SystemStatus,
+  SlotInfo,
   ChartDataPoint,
 } from './types'
 
@@ -312,7 +313,10 @@ export function getHealthChecks(_project?: string): HealthCheck[] {
     let staleCount = 0
     for (const f of files) {
       try {
-        const pid = readFileSync(join(slotDir, f), 'utf-8').trim()
+        const content = readFileSync(join(slotDir, f), 'utf-8').trim()
+        const pid = content.startsWith('{')
+          ? String(JSON.parse(content).pid)
+          : content
         if (pid) {
           const check = execFull(`kill -0 ${pid}`)
           if (check.exitCode !== 0) staleCount++
@@ -481,9 +485,30 @@ export function getSystemStatus(project?: string): SystemStatus {
 
   const slotDir = join(automationDir, 'state', 'agent-work-slots')
   let activeSlots = 0
+  const slots: SlotInfo[] = []
   if (existsSync(slotDir)) {
     try {
-      activeSlots = readdirSync(slotDir).filter((f) => f.endsWith('.pid')).length
+      const files = readdirSync(slotDir).filter((f) => f.endsWith('.pid'))
+      activeSlots = files.length
+      for (const f of files) {
+        try {
+          const content = readFileSync(join(slotDir, f), 'utf-8').trim()
+          if (content.startsWith('{')) {
+            slots.push(JSON.parse(content) as SlotInfo)
+          } else {
+            // Legacy plain-PID slot file — minimal info
+            slots.push({
+              pid: parseInt(content, 10),
+              job_type: 'unknown',
+              repo: '',
+              number: '',
+              started_at: '',
+            })
+          }
+        } catch {
+          /* skip unreadable slot */
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -495,6 +520,7 @@ export function getSystemStatus(project?: string): SystemStatus {
     windowCount,
     activeSlots,
     maxSlots: 10,
+    slots,
     checks,
   }
 }

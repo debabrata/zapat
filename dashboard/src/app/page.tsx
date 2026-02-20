@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { usePolling } from '@/hooks/usePolling'
 import { useProject } from '@/hooks/useProject'
 import { pipelineConfig } from '../../pipeline.config'
-import type { PipelineItem, ChartDataPoint, SystemStatus } from '@/lib/types'
+import type { PipelineItem, ChartDataPoint, SystemStatus, SlotInfo } from '@/lib/types'
 
 function OverviewContent() {
   const { project, projectName } = useProject()
@@ -88,6 +88,7 @@ function OverviewContent() {
           subtitle="active agent slots"
           loading={healthLoading}
         />
+
         <StatCard
           label="Jobs (24h)"
           value={recentMetrics.length}
@@ -107,6 +108,57 @@ function OverviewContent() {
           loading={completedLoading}
         />
       </StatsGrid>
+
+      {(healthData?.slots?.length ?? 0) > 0 && (
+        <Card className="border-0 bg-zinc-50 shadow-none dark:bg-zinc-800/50">
+          <CardHeader>
+            <CardTitle className="text-base">Active Slots</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+                    <th className="pb-2 pr-4 font-medium">Job</th>
+                    <th className="pb-2 pr-4 font-medium">Repo</th>
+                    <th className="pb-2 pr-4 font-medium">#</th>
+                    <th className="pb-2 pr-4 font-medium">Started</th>
+                    <th className="pb-2 font-medium">PID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {healthData!.slots.map((slot: SlotInfo) => {
+                    const repoShort = slot.repo ? slot.repo.split('/').pop() : '—'
+                    const elapsed = slot.started_at
+                      ? Math.floor((Date.now() - new Date(slot.started_at).getTime()) / 60000)
+                      : null
+                    return (
+                      <tr
+                        key={slot.pid}
+                        className="border-b last:border-0 dark:border-zinc-700"
+                      >
+                        <td className="py-2 pr-4">
+                          <span className="rounded bg-zinc-200 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-700">
+                            {slot.job_type}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">{repoShort}</td>
+                        <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">
+                          {slot.number ? `#${slot.number}` : '—'}
+                        </td>
+                        <td className="py-2 pr-4 text-zinc-500 dark:text-zinc-400">
+                          {elapsed !== null ? `${elapsed}m ago` : '—'}
+                        </td>
+                        <td className="py-2 font-mono text-xs text-zinc-400">{slot.pid}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-0 bg-zinc-50 shadow-none dark:bg-zinc-800/50">
         <CardHeader>

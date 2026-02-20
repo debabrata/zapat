@@ -35,7 +35,7 @@ gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
 SLOT_DIR="$SCRIPT_DIR/state/agent-work-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_WORK:-10}
 ITEM_STATE_FILE=$(create_item_state "$REPO" "work" "$ISSUE_NUMBER" "running" "$PROJECT_SLUG") || true
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "work" "$REPO" "$ISSUE_NUMBER"; then
     log_info "At capacity ($MAX_CONCURRENT concurrent sessions), skipping issue #${ISSUE_NUMBER}"
     [[ -n "$ITEM_STATE_FILE" && -f "$ITEM_STATE_FILE" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0

@@ -31,7 +31,7 @@ log_info "Starting write-tests for issue #${ISSUE_NUMBER} in ${REPO} (project: $
 SLOT_DIR="$SCRIPT_DIR/state/agent-work-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_WORK:-10}
 ITEM_STATE_FILE=$(create_item_state "$REPO" "write-tests" "$ISSUE_NUMBER" "running" "$PROJECT_SLUG") || true
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "write-tests" "$REPO" "$ISSUE_NUMBER"; then
     log_info "At capacity ($MAX_CONCURRENT concurrent sessions), skipping write-tests #${ISSUE_NUMBER}"
     [[ -n "${ITEM_STATE_FILE:-}" && -f "${ITEM_STATE_FILE:-}" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0
