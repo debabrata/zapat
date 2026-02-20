@@ -129,6 +129,11 @@ function OverviewContent() {
                 <tbody>
                   {healthData!.slots.map((slot: SlotInfo) => {
                     const repoShort = slot.repo ? slot.repo.split('/').pop() : '—'
+                    const repoUrl = slot.repo ? `https://github.com/${slot.repo}` : null
+                    const isPr = ['review', 'rework', 'test'].includes(slot.job_type)
+                    const numberUrl = slot.repo && slot.number
+                      ? `https://github.com/${slot.repo}/${isPr ? 'pull' : 'issues'}/${slot.number}`
+                      : null
                     const elapsed = slot.started_at
                       ? Math.floor((Date.now() - new Date(slot.started_at).getTime()) / 60000)
                       : null
@@ -142,9 +147,21 @@ function OverviewContent() {
                             {slot.job_type}
                           </span>
                         </td>
-                        <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">{repoShort}</td>
-                        <td className="py-2 pr-4 text-zinc-700 dark:text-zinc-300">
-                          {slot.number ? `#${slot.number}` : '—'}
+                        <td className="py-2 pr-4">
+                          {repoUrl ? (
+                            <a href={repoUrl} target="_blank" rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline dark:text-blue-400">
+                              {repoShort}
+                            </a>
+                          ) : <span className="text-zinc-700 dark:text-zinc-300">{repoShort}</span>}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {numberUrl ? (
+                            <a href={numberUrl} target="_blank" rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline dark:text-blue-400">
+                              #{slot.number}
+                            </a>
+                          ) : <span className="text-zinc-700 dark:text-zinc-300">—</span>}
                         </td>
                         <td className="py-2 pr-4 text-zinc-500 dark:text-zinc-400">
                           {elapsed !== null ? `${elapsed}m ago` : '—'}
