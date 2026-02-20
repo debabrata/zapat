@@ -109,7 +109,7 @@ launch_claude_session() {
     # Claude Code v2.1.49+ skips this dialog and starts directly in bypass mode.
     # Older versions show a "Do you trust the files" prompt requiring Down+Enter.
     local perm_content
-    if wait_for_tmux_content "$window" "(Yes|trust|skip permissions|dangerously)" "$perm_timeout"; then
+    if wait_for_tmux_content "$window" "(Yes|trust|skip permissions|dangerously|bypass permissions on|❯)" "$perm_timeout"; then
         perm_content=$(tmux capture-pane -pt "${TMUX_SESSION}:${window}" -S -20 2>/dev/null)
         if echo "$perm_content" | grep -qE "(bypass permissions on|❯)"; then
             # Already in bypass mode — no confirmation dialog, skip Step 2
