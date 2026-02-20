@@ -376,33 +376,38 @@ send_emergency() {
         return 1
     fi
 
-    local escaped_msg
-    escaped_msg=$(echo "$MESSAGE" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
-    escaped_msg="${escaped_msg:1:${#escaped_msg}-2}"
+    local hostname_val
+    hostname_val=$(hostname)
 
     local payload
-    payload=$(cat <<EOJSON
-{
-    "blocks": [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": ":rotating_light: EMERGENCY — Zapat Down",
-                "emoji": true
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "*${JOB_NAME}* failed critically:\\n${escaped_msg}\\n\\n*Action required:* SSH into $(hostname) and run:\\n\`bin/startup.sh\`"
-            }
+    payload=$(python3 -c "
+import json, sys
+
+job_name = sys.argv[1]
+hostname = sys.argv[2]
+msg = sys.stdin.read()
+
+text = f'*{job_name}* failed critically:\n{msg}\n\n*Action required:* SSH into {hostname} and run:\n\`bin/startup.sh\`'
+
+blocks = [
+    {
+        'type': 'header',
+        'text': {
+            'type': 'plain_text',
+            'text': ':rotating_light: EMERGENCY \u2014 Zapat Down',
+            'emoji': True
         }
-    ]
-}
-EOJSON
-)
+    },
+    {
+        'type': 'section',
+        'text': {
+            'type': 'mrkdwn',
+            'text': text
+        }
+    }
+]
+print(json.dumps({'blocks': blocks}))
+" "$JOB_NAME" "$hostname_val" <<< "$MESSAGE")
 
     curl -s -o /dev/null \
         -X POST \

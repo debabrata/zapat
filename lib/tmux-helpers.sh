@@ -13,6 +13,17 @@ PANE_PATTERN_RATE_LIMIT="(Switch to extra|Rate limit|rate_limit|429|Too Many Req
 PANE_PATTERN_PERMISSION="(Allow once|Allow always|Do you want to allow|wants to use the .* tool|approve this action)"
 PANE_PATTERN_FATAL="(FATAL|OOM|out of memory|Segmentation fault|core dumped|panic:|SIGKILL)"
 
+# Sanitize pane content for safe inclusion in notification messages.
+# Strips shell metacharacters that could cause injection if the content
+# is later interpolated in a shell context (backticks, $(), ${}, \).
+# Usage: sanitized=$(sanitize_pane_content "$raw_content")
+sanitize_pane_content() {
+    local input="${1:-}"
+    # Remove backticks, dollar signs, and backslashes
+    # This prevents $(cmd), `cmd`, ${var}, and escape sequences
+    printf '%s' "$input" | tr -d '`$\\'
+}
+
 # Wait for specific content to appear in a tmux pane
 # Usage: wait_for_tmux_content "window-name" "pattern" [timeout_seconds]
 # Returns: 0 if pattern found, 1 if timeout
@@ -238,6 +249,7 @@ check_pane_health() {
         if echo "$content" | grep -qE "$PANE_PATTERN_FATAL"; then
             local error_snippet
             error_snippet=$(echo "$content" | grep -E "$PANE_PATTERN_FATAL" | tail -3)
+            error_snippet=$(sanitize_pane_content "$error_snippet")
 
             _log_structured "error" "Fatal error detected in pane ${pane_id}" \
                 "\"type\":\"pane_health\",\"issue\":\"fatal\",\"pane\":\"${pane_id}\",\"job\":\"${job_name}\""
