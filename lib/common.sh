@@ -936,7 +936,9 @@ REC_REWORK
 | ux-reviewer | `model: "{{SUBAGENT_MODEL}}"` | Rarely needs upgrade |
 | product-manager | `model: "{{SUBAGENT_MODEL}}"` | Rarely needs upgrade |
 
-Spawn each teammate using `model: "{{SUBAGENT_MODEL}}"` in the Task tool call unless you have a specific reason to upgrade. The lead agent (you) already runs on the model specified by `CLAUDE_MODEL`.
+Spawn each teammate using `model: "{{SUBAGENT_MODEL}}"` and `mode: "bypassPermissions"` in the Task tool call unless you have a specific reason to upgrade. The lead agent (you) already runs on the model specified by `CLAUDE_MODEL`.
+
+**CRITICAL**: You MUST pass `mode: "bypassPermissions"` on every Task tool call when spawning teammates. Without this, teammates will get stuck on "Waiting for team lead approval" for every Bash command and the entire job will stall.
 
 MODEL_GUIDE
 

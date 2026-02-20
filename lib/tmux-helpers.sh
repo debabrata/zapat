@@ -13,7 +13,7 @@ TMUX_SESSION="${TMUX_SESSION:-zapat}"
 # running session's status bar and must NOT be used as a match pattern.
 PANE_PATTERN_ACCOUNT_LIMIT="(out of extra usage|resets [0-9]|usage limit|plan limit|You've reached)"
 PANE_PATTERN_RATE_LIMIT="(Switch to extra|Rate limit|rate_limit|429|Too Many Requests|Retry after)"
-PANE_PATTERN_PERMISSION="(Allow once|Allow always|Do you want to allow|Do you want to (create|make|proceed|run|write|edit)|wants to use the .* tool|approve this action)"
+PANE_PATTERN_PERMISSION="(Allow once|Allow always|Do you want to allow|Do you want to (create|make|proceed|run|write|edit)|wants to use the .* tool|approve this action|Waiting for team lead approval)"
 PANE_PATTERN_FATAL="(FATAL|OOM|out of memory|Segmentation fault|core dumped|panic:|SIGKILL)"
 
 # Wait for specific content to appear in a tmux pane
@@ -241,6 +241,10 @@ check_pane_health() {
         fi
 
         # Priority 2: Permission prompt
+        # Note: "Waiting for team lead approval" prompts CANNOT be auto-resolved by
+        # pressing Enter — they require the lead agent to send an approval message.
+        # Detection here is for monitoring/alerting only (Slack notifications).
+        # Fix: ensure leads pass `mode: "bypassPermissions"` when spawning teammates.
         if echo "$content" | grep -qE "$PANE_PATTERN_PERMISSION"; then
             _log_structured "warn" "Permission prompt detected in pane ${pane_id}" \
                 "\"type\":\"pane_health\",\"issue\":\"permission\",\"pane\":\"${pane_id}\",\"job\":\"${job_name}\""
