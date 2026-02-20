@@ -8,6 +8,7 @@ import type {
   SystemStatus,
   SlotInfo,
   ChartDataPoint,
+  GitHubEvent,
 } from './types'
 
 function getAutomationDir(): string {
@@ -539,6 +540,153 @@ export function getSystemStatus(project?: string): SystemStatus {
     slots,
     checks,
   }
+}
+
+export function getGitHubActivity(days: number = 7, project?: string): GitHubEvent[] {
+  const repos = getRepos(project)
+  const events: GitHubEvent[] = []
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+
+  for (const { repo } of repos) {
+    // 1. PRs created by Zapat (agent/ branch prefix)
+    const prJson = cachedExec(
+      `gh pr list --repo "${repo}" --json number,title,url,createdAt,mergedAt,state,headRefName --state all --limit 30`,
+      60000,
+    )
+    if (prJson) {
+      try {
+        for (const pr of JSON.parse(prJson)) {
+          if (!pr.headRefName?.startsWith('agent/')) continue
+          if (pr.createdAt >= since) {
+            events.push({
+              id: `${repo}-pr-created-${pr.number}`,
+              type: 'pr_created',
+              repo,
+              number: pr.number,
+              title: pr.title,
+              url: pr.url,
+              timestamp: pr.createdAt,
+            })
+          }
+          if (pr.state === 'MERGED' && pr.mergedAt >= since) {
+            events.push({
+              id: `${repo}-pr-merged-${pr.number}`,
+              type: 'pr_merged',
+              repo,
+              number: pr.number,
+              title: pr.title,
+              url: pr.url,
+              timestamp: pr.mergedAt,
+            })
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    // 2. PR review comments posted by Zapat
+    const reviewedPrsJson = cachedExec(
+      `gh pr list --repo "${repo}" --json number,title,url,comments --state all --limit 30`,
+      60000,
+    )
+    if (reviewedPrsJson) {
+      try {
+        for (const pr of JSON.parse(reviewedPrsJson)) {
+          for (const comment of (pr.comments || [])) {
+            if (!comment.createdAt || comment.createdAt < since) continue
+            const body: string = comment.body || ''
+            if (body.startsWith('## PR Review') || body.startsWith('## Agent Review Complete')) {
+              // Extract first non-empty line after the heading as summary
+              const lines = body.split('\n').map((l: string) => l.trim()).filter(Boolean)
+              const summary = lines.find((l: string) => !l.startsWith('#') && !l.startsWith('---'))
+              events.push({
+                id: `${repo}-pr-reviewed-${pr.number}-${comment.createdAt}`,
+                type: 'pr_reviewed',
+                repo,
+                number: pr.number,
+                title: pr.title,
+                url: pr.url,
+                timestamp: comment.createdAt,
+                summary: summary?.slice(0, 120),
+              })
+              break // one review event per PR
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    // 3. Issue comments posted by Zapat (triage / research)
+    const issueJson = cachedExec(
+      `gh issue list --repo "${repo}" --json number,title,url,comments --state all --limit 30`,
+      60000,
+    )
+    if (issueJson) {
+      try {
+        for (const issue of JSON.parse(issueJson)) {
+          for (const comment of (issue.comments || [])) {
+            if (!comment.createdAt || comment.createdAt < since) continue
+            const body: string = comment.body || ''
+            if (
+              body.startsWith('## Triage') ||
+              body.startsWith('## Research') ||
+              body.startsWith('## Agent') ||
+              body.includes('<!-- zapat:')
+            ) {
+              const lines = body.split('\n').map((l: string) => l.trim()).filter(Boolean)
+              const summary = lines.find((l: string) => !l.startsWith('#') && !l.startsWith('<!--'))
+              const isResearch = body.startsWith('## Research')
+              events.push({
+                id: `${repo}-issue-${isResearch ? 'researched' : 'triaged'}-${issue.number}-${comment.createdAt}`,
+                type: isResearch ? 'issue_researched' : 'issue_triaged',
+                repo,
+                number: issue.number,
+                title: issue.title,
+                url: issue.url,
+                timestamp: comment.createdAt,
+                summary: summary?.slice(0, 120),
+              })
+              break
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    // 4. Closed issues that had agent labels
+    const closedIssueJson = cachedExec(
+      `gh issue list --repo "${repo}" --json number,title,url,closedAt,labels --state closed --limit 20`,
+      60000,
+    )
+    if (closedIssueJson) {
+      try {
+        for (const issue of JSON.parse(closedIssueJson)) {
+          if (!issue.closedAt || issue.closedAt < since) continue
+          const labelNames = (issue.labels || []).map((l: any) => l.name)
+          if (labelNames.some((l: string) => ['agent-work', 'agent-research', 'agent'].includes(l))) {
+            events.push({
+              id: `${repo}-issue-closed-${issue.number}`,
+              type: 'issue_closed',
+              repo,
+              number: issue.number,
+              title: issue.title,
+              url: issue.url,
+              timestamp: issue.closedAt,
+            })
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  // Deduplicate by id, sort newest first
+  const seen = new Set<string>()
+  const deduped = events.filter(e => {
+    if (seen.has(e.id)) return false
+    seen.add(e.id)
+    return true
+  })
+  deduped.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+  return deduped.slice(0, 50)
 }
 
 export function getProjectList(): Array<{ slug: string; name: string }> {

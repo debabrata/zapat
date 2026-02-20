@@ -65,6 +65,19 @@ export interface SystemStatus {
   checks: HealthCheck[]
 }
 
+export type GitHubEventType = 'pr_created' | 'pr_merged' | 'pr_reviewed' | 'pr_approved' | 'issue_triaged' | 'issue_researched' | 'issue_closed'
+
+export interface GitHubEvent {
+  id: string
+  type: GitHubEventType
+  repo: string
+  number: number
+  title: string
+  url: string
+  timestamp: string
+  summary?: string
+}
+
 export interface ChartDataPoint {
   date: string
   total: number
