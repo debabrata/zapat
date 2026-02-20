@@ -13,7 +13,7 @@ TMUX_SESSION="${TMUX_SESSION:-zapat}"
 # running session's status bar and must NOT be used as a match pattern.
 PANE_PATTERN_ACCOUNT_LIMIT="(out of extra usage|resets [0-9]|usage limit|plan limit|You've reached)"
 PANE_PATTERN_RATE_LIMIT="(Switch to extra|Rate limit|rate_limit|429|Too Many Requests|Retry after)"
-PANE_PATTERN_PERMISSION="(Allow once|Allow always|Do you want to allow|Do you want to (create|make|proceed|run|write|edit)|wants to use the .* tool|approve this action|Waiting for team lead approval)"
+PANE_PATTERN_PERMISSION="(Allow once|Allow always|Do you want to allow|Do you want to (create|make|run|write|edit)|wants to use the .* tool|approve this action|Waiting for team lead approval)"
 PANE_PATTERN_FATAL="(FATAL|OOM|out of memory|Segmentation fault|core dumped|panic:|SIGKILL)"
 
 # Wait for specific content to appear in a tmux pane

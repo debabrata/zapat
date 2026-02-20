@@ -248,11 +248,11 @@ teardown() {
     assert_output --partial "Work solo"
 }
 
-@test "generate_task_assessment: duo implement — recommends small team" {
+@test "generate_task_assessment: duo implement — recommends core team" {
     run generate_task_assessment "duo" "implement"
     assert_success
     assert_output --partial "Classification: Duo"
-    assert_output --partial "Small team (2 agents)"
+    assert_output --partial "Core team (3 agents)"
     assert_output --partial "{{BUILDER_AGENT}}"
     assert_output --partial "{{SECURITY_AGENT}}"
 }
@@ -266,11 +266,11 @@ teardown() {
     assert_output --partial "{{PRODUCT_AGENT}}"
 }
 
-@test "generate_task_assessment: solo review — recommends solo review" {
+@test "generate_task_assessment: solo review — recommends minimum review team" {
     run generate_task_assessment "solo" "review"
     assert_success
     assert_output --partial "Classification: Solo"
-    assert_output --partial "Review solo"
+    assert_output --partial "Minimum review team (2 agents)"
 }
 
 @test "generate_task_assessment: duo review — recommends small review team" {
@@ -287,10 +287,10 @@ teardown() {
     assert_output --partial "Full review team (3 agents)"
 }
 
-@test "generate_task_assessment: rework — recommends feedback-based sizing" {
+@test "generate_task_assessment: rework — recommends builder + security minimum" {
     run generate_task_assessment "full" "rework"
     assert_success
-    assert_output --partial "Feedback-based sizing"
+    assert_output --partial "Always spawn at minimum builder + security-reviewer"
     assert_output --partial "Announce your classification"
 }
 
@@ -305,7 +305,7 @@ teardown() {
     assert_success
     assert_output --partial "Leadership Principles"
     assert_output --partial "Customer obsession"
-    assert_output --partial "Frugality"
+    assert_output --partial "Quality over speed"
 }
 
 @test "generate_task_assessment: includes Model Budget Guide" {
@@ -327,5 +327,5 @@ teardown() {
     run generate_task_assessment "solo" "implement"
     assert_success
     assert_output --partial "Your Authority as Lead"
-    assert_output --partial "advisory, not mandatory"
+    assert_output --partial "you may always add agents, never remove required ones"
 }
