@@ -401,7 +401,7 @@ export function getHealthChecks(_project?: string): HealthCheck[] {
       const windows = windowsOutput.split('\n').filter(Boolean)
       let stuckPanes: string[] = []
       const ratePattern = /Switch to extra|Rate limit|rate_limit|429|Too Many Requests|Retry after/
-      const permPattern = /Allow|Deny|permission|Do you want to|approve this|shift\+tab to cycle/
+      const permPattern = /Allow once|Allow always|Do you want to (create|make|proceed|run|write|edit|allow)/
       const fatalPattern = /FATAL|OOM|out of memory|Segmentation fault|core dumped|panic:|SIGKILL/
 
       for (const win of windows) {
