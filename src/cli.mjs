@@ -7,6 +7,8 @@ import { registerLogsCommand } from './commands/logs.mjs';
 import { registerRiskCommand } from './commands/risk.mjs';
 import { registerProjectsCommand } from './commands/projects.mjs';
 import { registerInitCommand } from './commands/init.mjs';
+import { registerStartCommand } from './commands/start.mjs';
+import { registerStopCommand } from './commands/stop.mjs';
 
 export function createCli() {
   const program = new Command();
@@ -25,6 +27,8 @@ export function createCli() {
   registerDashboardCommand(program);
   registerLogsCommand(program);
   registerRiskCommand(program);
+  registerStartCommand(program);
+  registerStopCommand(program);
 
   return program;
 }
