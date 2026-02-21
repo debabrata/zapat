@@ -368,9 +368,12 @@ monitor_session() {
         # Idle detection: Claude finished and is sitting at the ❯ prompt.
         # The idle pattern is: cost line (✻) followed by separator (───) and
         # the input prompt (❯), with no active spinner visible.
+        # IMPORTANT: We also require the cost line (✻) to be present, which
+        # proves Claude actually processed a prompt. Without it, the session
+        # is still in its initial startup state and hasn't done any work yet.
         local tail_content
         tail_content=$(tmux capture-pane -t "${TMUX_SESSION}:${window}" -p -S -5 2>/dev/null || echo "")
-        if echo "$tail_content" | grep -qE "^❯" && ! echo "$tail_content" | grep -qE "(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Working|Thinking)"; then
+        if echo "$tail_content" | grep -qE "^❯" && echo "$tail_content" | grep -qE "✻" && ! echo "$tail_content" | grep -qE "(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Working|Thinking)"; then
             idle_checks=$((idle_checks + 1))
             if [[ $idle_checks -ge $idle_threshold ]]; then
                 log_info "Session '$window' idle at prompt for $idle_checks checks — killing window"

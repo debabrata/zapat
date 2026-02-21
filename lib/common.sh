@@ -586,7 +586,8 @@ read_agents_conf() {
             product)    PRODUCT_AGENT="$persona" ;;
             ux)         UX_AGENT="$persona" ;;
             compliance) COMPLIANCE_AGENT="$persona" ;;
-            *)          export "AGENT_${role^^}=$persona" ;;
+            *)          local upper_role; upper_role=$(echo "$role" | tr '[:lower:]' '[:upper:]')
+                        export "AGENT_${upper_role}=$persona" ;;
         esac
     done < "$conf"
 
@@ -607,7 +608,8 @@ read_agents_conf() {
                 product)    PRODUCT_AGENT="$persona" ;;
                 ux)         UX_AGENT="$persona" ;;
                 compliance) COMPLIANCE_AGENT="$persona" ;;
-                *)          export "AGENT_${base_role^^}=$persona" ;;
+                *)          local upper_base; upper_base=$(echo "$base_role" | tr '[:lower:]' '[:upper:]')
+                            export "AGENT_${upper_base}=$persona" ;;
             esac
         done < "$conf"
     fi
