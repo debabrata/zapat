@@ -326,6 +326,11 @@ monitor_session() {
 
     log_info "Monitoring session '$window' (timeout: ${timeout}s)"
 
+    # Idle detection: count consecutive checks where Claude is at the ❯ prompt
+    # with no active spinner. After 2 consecutive idle checks, send /exit.
+    local idle_checks=0
+    local idle_threshold=2
+
     while tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -qF "$window"; do
         local elapsed=$(( $(date +%s) - start ))
         if [[ $elapsed -gt $timeout ]]; then
@@ -358,6 +363,29 @@ monitor_session() {
             fi
             rm -f "$signal_file"
             return 2
+        fi
+
+        # Idle detection: Claude finished and is sitting at the ❯ prompt.
+        # The idle pattern is: cost line (✻) followed by separator (───) and
+        # the input prompt (❯), with no active spinner visible.
+        local tail_content
+        tail_content=$(tmux capture-pane -t "${TMUX_SESSION}:${window}" -p -S -5 2>/dev/null || echo "")
+        if echo "$tail_content" | grep -qE "^❯" && ! echo "$tail_content" | grep -qE "(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Working|Thinking)"; then
+            idle_checks=$((idle_checks + 1))
+            if [[ $idle_checks -ge $idle_threshold ]]; then
+                log_info "Session '$window' idle at prompt for $idle_checks checks — sending /exit"
+                tmux send-keys -t "${TMUX_SESSION}:${window}" "/exit" Enter
+                sleep 5
+                # Force kill if /exit didn't close it
+                if tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -qF "$window"; then
+                    tmux kill-window -t "${TMUX_SESSION}:${window}" 2>/dev/null || true
+                fi
+                rm -f "$signal_file"
+                log_info "Session '$window' terminated after idle detection"
+                return 0
+            fi
+        else
+            idle_checks=0
         fi
 
         sleep "$interval"
