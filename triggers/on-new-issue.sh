@@ -176,7 +176,23 @@ elif echo "$CURRENT_LABELS" | grep -q "agent-research"; then
     TRIAGE_DETAILS="${TRIAGE_DETAILS} agent-research label added (research team queued)."
     TRIAGE_STATUS="${TRIAGE_STATUS:-success}"
 else
-    TRIAGE_DETAILS="${TRIAGE_DETAILS} No agent-work/agent-research label (may need human decision)."
+    # Belt-and-suspenders: if the agent recommended a label in the triage comment
+    # but didn't apply it via gh CLI, apply it now.
+    LAST_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+        --jq '.[-1].body // ""' 2>/dev/null || echo "")
+    if echo "$LAST_COMMENT" | grep -qiE '(recommended labels|recommend.*label).*agent-work'; then
+        log_info "Agent recommended agent-work in comment but didn't apply it — applying now"
+        gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "agent-work" 2>/dev/null || true
+        TRIAGE_DETAILS="${TRIAGE_DETAILS} agent-work label applied from triage recommendation (implementation queued)."
+        TRIAGE_STATUS="${TRIAGE_STATUS:-success}"
+    elif echo "$LAST_COMMENT" | grep -qiE '(recommended labels|recommend.*label).*agent-research'; then
+        log_info "Agent recommended agent-research in comment but didn't apply it — applying now"
+        gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "agent-research" 2>/dev/null || true
+        TRIAGE_DETAILS="${TRIAGE_DETAILS} agent-research label applied from triage recommendation (research team queued)."
+        TRIAGE_STATUS="${TRIAGE_STATUS:-success}"
+    else
+        TRIAGE_DETAILS="${TRIAGE_DETAILS} No agent-work/agent-research label (may need human decision)."
+    fi
 fi
 
 # Default to success if no warnings
