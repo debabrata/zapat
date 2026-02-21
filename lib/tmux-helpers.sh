@@ -5,8 +5,14 @@
 
 TMUX_SESSION="${TMUX_SESSION:-zapat}"
 
-# Patterns for detecting stuck panes
-# Permission pattern uses exact Claude CLI prompt phrases to avoid false positives
+# Source provider if available; sets AGENT_PROVIDER and loads provider functions
+if [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/lib/provider.sh" ]]; then
+    source "$SCRIPT_DIR/lib/provider.sh" 2>/dev/null || true
+fi
+
+# Patterns for detecting stuck panes — default to Claude CLI phrases, then
+# override from the active provider if provider.sh has been sourced.
+# Permission pattern uses exact CLI prompt phrases to avoid false positives
 # from code review output (IAM policies, etc.).
 # Note: PANE_PATTERN_BYPASS removed — defaultMode:bypassPermissions in settings.json
 # means no startup bypass prompt appears. "shift+tab to cycle" now appears in every
@@ -15,6 +21,17 @@ PANE_PATTERN_ACCOUNT_LIMIT="(out of extra usage|resets [0-9]|usage limit|plan li
 PANE_PATTERN_RATE_LIMIT="(Switch to extra|Rate limit|rate_limit|429|Too Many Requests|Retry after)"
 PANE_PATTERN_PERMISSION="(Allow once|Allow always|Do you want to allow|Do you want to (create|make|run|write|edit)|wants to use the .* tool|approve this action|Waiting for team lead approval)"
 PANE_PATTERN_FATAL="(FATAL|OOM|out of memory|Segmentation fault|core dumped|panic:|SIGKILL)"
+
+# Override patterns from provider functions if a provider has been loaded
+if command -v provider_get_account_limit_pattern &>/dev/null; then
+    PANE_PATTERN_ACCOUNT_LIMIT="$(provider_get_account_limit_pattern)"
+fi
+if command -v provider_get_rate_limit_pattern &>/dev/null; then
+    PANE_PATTERN_RATE_LIMIT="$(provider_get_rate_limit_pattern)"
+fi
+if command -v provider_get_permission_pattern &>/dev/null; then
+    PANE_PATTERN_PERMISSION="$(provider_get_permission_pattern)"
+fi
 
 # Wait for specific content to appear in a tmux pane
 # Usage: wait_for_tmux_content "window-name" "pattern" [timeout_seconds]
@@ -40,10 +57,10 @@ wait_for_tmux_content() {
     return 1
 }
 
-# Launch a Claude session in a tmux window with readiness detection
-# Usage: launch_claude_session "window-name" "/path/to/workdir" "/path/to/prompt-file" [extra_env_vars] [agent_model]
+# Launch an agent session in a tmux window with readiness detection
+# Usage: launch_agent_session "window-name" "/path/to/workdir" "/path/to/prompt-file" [extra_env_vars] [agent_model]
 # Returns: 0 if session launched and prompt submitted, 1 on failure
-launch_claude_session() {
+launch_agent_session() {
     local window="$1"
     local workdir="$2"
     local prompt_file="$3"
@@ -64,6 +81,14 @@ launch_claude_session() {
     # Kill any existing window with the same name
     tmux kill-window -t "${TMUX_SESSION}:${window}" 2>/dev/null || true
 
+    # Get launch command from provider if available, else use Claude default
+    local agent_cmd
+    if command -v provider_get_launch_cmd &>/dev/null; then
+        agent_cmd="$(provider_get_launch_cmd "$model")"
+    else
+        agent_cmd="claude --model '${model}' --dangerously-skip-permissions --permission-mode bypassPermissions"
+    fi
+
     # Build the command
     local cmd="cd '$workdir' && "
     cmd+="unset CLAUDECODE && "
@@ -71,9 +96,7 @@ launch_claude_session() {
     if [[ -n "$extra_env" ]]; then
         cmd+="$extra_env "
     fi
-    cmd+="claude --model '${model}' "
-    cmd+="--dangerously-skip-permissions "
-    cmd+="--permission-mode bypassPermissions; "
+    cmd+="${agent_cmd}; "
     cmd+="exit"
 
     # Create new tmux window
@@ -149,7 +172,7 @@ launch_claude_session() {
     sleep 2
     tmux send-keys -t "${TMUX_SESSION}:${window}" Enter
 
-    log_info "Prompt submitted to Claude session in window '$window'"
+    log_info "Prompt submitted to agent session in window '$window'"
     return 0
 }
 
@@ -365,15 +388,26 @@ monitor_session() {
             return 2
         fi
 
-        # Idle detection: Claude finished and is sitting at the ❯ prompt.
+        # Idle detection: agent finished and is sitting at the idle prompt.
         # The idle pattern is: cost line (✻) followed by separator (───) and
         # the input prompt (❯), with no active spinner visible.
         # IMPORTANT: We also require the cost line (✻) to be present, which
-        # proves Claude actually processed a prompt. Without it, the session
+        # proves the agent actually processed a prompt. Without it, the session
         # is still in its initial startup state and hasn't done any work yet.
+        local _idle_pattern _spinner_pattern
+        if command -v provider_get_idle_pattern &>/dev/null; then
+            _idle_pattern="$(provider_get_idle_pattern)"
+        else
+            _idle_pattern="^❯"
+        fi
+        if command -v provider_get_spinner_pattern &>/dev/null; then
+            _spinner_pattern="$(provider_get_spinner_pattern)"
+        else
+            _spinner_pattern="(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Working|Thinking)"
+        fi
         local tail_content
         tail_content=$(tmux capture-pane -t "${TMUX_SESSION}:${window}" -p -S -5 2>/dev/null || echo "")
-        if echo "$tail_content" | grep -qE "^❯" && echo "$tail_content" | grep -qE "✻" && ! echo "$tail_content" | grep -qE "(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Working|Thinking)"; then
+        if echo "$tail_content" | grep -qE "$_idle_pattern" && echo "$tail_content" | grep -qE "✻" && ! echo "$tail_content" | grep -qE "$_spinner_pattern"; then
             idle_checks=$((idle_checks + 1))
             if [[ $idle_checks -ge $idle_threshold ]]; then
                 log_info "Session '$window' idle at prompt for $idle_checks checks — killing window"

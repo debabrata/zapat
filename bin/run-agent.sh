@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/provider.sh"
 
 # --- Usage ---
 usage() {
@@ -196,12 +197,7 @@ else
     TIMEOUT_CMD="timeout"
 fi
 
-CLAUDE_OUTPUT=$($TIMEOUT_CMD "${TIMEOUT}" claude \
-    -p "$(cat "$PROMPT_TMPFILE")" \
-    --model "$EFFECTIVE_MODEL" \
-    --allowedTools "$ALLOWED_TOOLS" \
-    --max-budget-usd "$BUDGET" \
-    2>&1) || CLAUDE_EXIT=$?
+CLAUDE_OUTPUT=$(provider_run_noninteractive "$PROMPT_TMPFILE" "$EFFECTIVE_MODEL" "$ALLOWED_TOOLS" "$BUDGET" "$TIMEOUT" 2>&1) || CLAUDE_EXIT=$?
 
 # Write output to log
 {

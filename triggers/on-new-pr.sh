@@ -154,7 +154,7 @@ else
     TMUX_WINDOW="review-${REPO##*/}-pr-${PR_NUMBER}"
 fi
 
-launch_claude_session "$TMUX_WINDOW" "$EFFECTIVE_PATH" "$PROMPT_FILE"
+launch_agent_session "$TMUX_WINDOW" "$EFFECTIVE_PATH" "$PROMPT_FILE"
 rm -f "$PROMPT_FILE"
 
 # --- Monitor with Timeout ---

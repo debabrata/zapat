@@ -317,11 +317,20 @@ check_prereqs() {
         failed=1
     fi
 
-    # Check claude CLI is available
-    if ! command -v claude &>/dev/null; then
-        log_error "claude CLI not found. Install: npm install -g @anthropic-ai/claude-code"
-        PREREQ_FAILURES="${PREREQ_FAILURES}\n- claude CLI not found"
-        failed=1
+    # Check agent CLI is available (use provider function if loaded, else check claude)
+    if command -v provider_prereq_check &>/dev/null; then
+        if ! provider_prereq_check; then
+            local _provider="${AGENT_PROVIDER:-claude}"
+            log_error "$_provider CLI not found"
+            PREREQ_FAILURES="${PREREQ_FAILURES}\n- $_provider CLI not found"
+            failed=1
+        fi
+    else
+        if ! command -v claude &>/dev/null; then
+            log_error "claude CLI not found. Install: npm install -g @anthropic-ai/claude-code"
+            PREREQ_FAILURES="${PREREQ_FAILURES}\n- claude CLI not found"
+            failed=1
+        fi
     fi
 
     # Check jq is available
@@ -694,11 +703,15 @@ $(cat "$footer_file")"
 
     # Derive Task tool model shorthand from CLAUDE_SUBAGENT_MODEL env var
     local _subagent_model="sonnet"
-    case "${CLAUDE_SUBAGENT_MODEL:-}" in
-        *opus*) _subagent_model="opus" ;;
-        *haiku*) _subagent_model="haiku" ;;
-        *sonnet*) _subagent_model="sonnet" ;;
-    esac
+    if command -v provider_get_model_shorthand &>/dev/null; then
+        _subagent_model="$(provider_get_model_shorthand "${CLAUDE_SUBAGENT_MODEL:-}")"
+    else
+        case "${CLAUDE_SUBAGENT_MODEL:-}" in
+            *opus*) _subagent_model="opus" ;;
+            *haiku*) _subagent_model="haiku" ;;
+            *sonnet*) _subagent_model="sonnet" ;;
+        esac
+    fi
 
     # Cap PR_DIFF at configurable limit (~40,000 characters ≈ ~10,000 tokens)
     local max_diff_chars="${MAX_DIFF_CHARS:-40000}"

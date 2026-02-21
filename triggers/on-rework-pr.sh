@@ -177,7 +177,7 @@ else
     TMUX_WINDOW="rework-${REPO##*/}-pr-${PR_NUMBER}"
 fi
 
-launch_claude_session "$TMUX_WINDOW" "$WORKTREE_DIR" "$PROMPT_FILE"
+launch_agent_session "$TMUX_WINDOW" "$WORKTREE_DIR" "$PROMPT_FILE"
 rm -f "$PROMPT_FILE"
 
 # --- Monitor with Timeout ---
