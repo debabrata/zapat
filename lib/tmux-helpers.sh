@@ -373,13 +373,10 @@ monitor_session() {
         if echo "$tail_content" | grep -qE "^❯" && ! echo "$tail_content" | grep -qE "(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Working|Thinking)"; then
             idle_checks=$((idle_checks + 1))
             if [[ $idle_checks -ge $idle_threshold ]]; then
-                log_info "Session '$window' idle at prompt for $idle_checks checks — sending /exit"
-                tmux send-keys -t "${TMUX_SESSION}:${window}" "/exit" Enter
-                sleep 5
-                # Force kill if /exit didn't close it
-                if tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -qF "$window"; then
-                    tmux kill-window -t "${TMUX_SESSION}:${window}" 2>/dev/null || true
-                fi
+                log_info "Session '$window' idle at prompt for $idle_checks checks — killing window"
+                # Kill directly — /exit via send-keys is unreliable (races with
+                # the command picker menu). The session is idle, nothing to save.
+                tmux kill-window -t "${TMUX_SESSION}:${window}" 2>/dev/null || true
                 rm -f "$signal_file"
                 log_info "Session '$window' terminated after idle detection"
                 return 0
