@@ -38,6 +38,8 @@ LABELS=(
     "zapat-rework|CCCCCC|Addressing review feedback"
     "zapat-researching|CCCCCC|Research in progress"
     "needs-rebase|CCCCCC|Auto-rebase failed, manual resolution needed"
+    "zapat-ci-fix|CCCCCC|CI auto-fix in progress"
+    "zapat-visual|CCCCCC|Visual verification in progress"
     "agent-write-tests|0E8A16|Write tests for specified code"
     # Classification
     "feature|0075CA|New feature"

@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/item-state.sh"
+source "$SCRIPT_DIR/lib/handoff.sh"
 load_env
 
 # --- Args ---
@@ -142,28 +143,30 @@ else
     gh pr edit "$PR_NUMBER" --repo "$REPO" \
         --add-label "needs-rebase" 2>/dev/null || log_warn "Failed to add needs-rebase label"
 
-    # Post conflict comment
-    gh pr comment "$PR_NUMBER" --repo "$REPO" --body "### Rebase conflict detected
-
-This PR could not be automatically rebased onto the latest \`${BASE_BRANCH}\` branch.
-
-**What happened:** Another PR was merged into \`${BASE_BRANCH}\` and the changes conflict with this branch.
-
-**What to do:**
-- Resolve the conflicts manually, or
-- Comment \`@zapat please rebase\` to retry after fixing
+    # Post handoff comment with conflict context
+    local conflict_details="**Rebase target:** \`${BASE_BRANCH}\`
 
 <details>
-<summary>Conflict details</summary>
+<summary>Conflict output</summary>
 
 \`\`\`
 ${REBASE_OUTPUT}
 \`\`\`
 
-</details>
+</details>"
+    post_handoff_comment "$REPO" "$PR_NUMBER" "rebase_conflict" "$conflict_details" || {
+        # Fallback to simple comment if handoff fails
+        gh pr comment "$PR_NUMBER" --repo "$REPO" --body "### Rebase conflict detected
+
+This PR could not be automatically rebased onto \`${BASE_BRANCH}\`. Manual resolution needed.
+
+\`\`\`
+${REBASE_OUTPUT}
+\`\`\`
 
 ---
 _Auto-rebase by [Zapat](https://github.com/zapat-ai/zapat)_" 2>/dev/null || log_warn "Failed to post rebase conflict comment"
+    }
 
     # Slack notification for conflicts
     "$SCRIPT_DIR/bin/notify.sh" \

@@ -20,6 +20,7 @@ Options:
   --job-name NAME            Job name for Slack header
   --status STATUS            success|failure|emergency (default: success)
   --type TYPE                pr|issue (for GitHub comments, default: pr)
+  --handoff REASON           Format as handoff notification (max_rework|rebase_conflict|high_risk|ci_fix_exhausted)
   -h, --help                 Show this help
 
 Examples:
@@ -38,6 +39,7 @@ MESSAGE=""
 JOB_NAME="zapat"
 STATUS="success"
 COMMENT_TYPE="pr"
+HANDOFF_REASON=""
 
 # --- Parse Args ---
 while [[ $# -gt 0 ]]; do
@@ -66,6 +68,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --type)
             COMMENT_TYPE="$2"
+            shift 2
+            ;;
+        --handoff)
+            HANDOFF_REASON="$2"
             shift 2
             ;;
         -h|--help)
@@ -172,6 +178,20 @@ send_slack() {
         emergency) emoji="rotating_light" ;;
         *)         emoji="information_source" ;;
     esac
+
+    # Handoff-specific formatting: prefix message with reason context
+    if [[ -n "$HANDOFF_REASON" ]]; then
+        emoji="warning"
+        local handoff_label
+        case "$HANDOFF_REASON" in
+            max_rework)       handoff_label="Rework Limit Reached" ;;
+            rebase_conflict)  handoff_label="Rebase Conflict" ;;
+            high_risk)        handoff_label="High-Risk PR" ;;
+            ci_fix_exhausted) handoff_label="CI Fix Exhausted" ;;
+            *)                handoff_label="Pipeline Escalation" ;;
+        esac
+        MESSAGE="*Handoff: ${handoff_label}*\n${MESSAGE}"
+    fi
 
     # Convert markdown to Slack mrkdwn format
     local slack_msg

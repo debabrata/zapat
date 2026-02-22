@@ -272,6 +272,66 @@ get_rework_cycles() {
     jq -r '.rework_cycles // 0' "$state_file" 2>/dev/null
 }
 
+# Increment the CI fix attempt counter for a PR
+# Usage: increment_ci_fix_attempts "owner/repo" "test" "123" ["project-slug"]
+# Returns: the new attempt count
+# NOTE: This counter is separate from rework_cycles to prevent trivial lint fixes
+# from eating the rework budget.
+increment_ci_fix_attempts() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        echo "0"
+        return 1
+    fi
+
+    local current_attempts
+    current_attempts=$(jq -r '.ci_fix_attempts // 0' "$state_file" 2>/dev/null)
+    local new_attempts=$((current_attempts + 1))
+
+    local tmp_file="${state_file}.tmp"
+    jq --argjson attempts "$new_attempts" '.ci_fix_attempts = $attempts' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+
+    echo "$new_attempts"
+    return 0
+}
+
+# Get the current CI fix attempt count for a PR
+# Usage: get_ci_fix_attempts "owner/repo" "test" "123" ["project-slug"]
+# Returns: the current attempt count (0 if not set)
+get_ci_fix_attempts() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        echo "0"
+        return 0
+    fi
+
+    jq -r '.ci_fix_attempts // 0' "$state_file" 2>/dev/null
+}
+
+# Reset CI fix attempts (called when tests pass)
+# Usage: reset_ci_fix_attempts "owner/repo" "test" "123" ["project-slug"]
+reset_ci_fix_attempts() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        return 0
+    fi
+
+    local tmp_file="${state_file}.tmp"
+    jq '.ci_fix_attempts = 0' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+}
+
 # List all items that are ready for retry
 # Usage: list_retryable_items ["project-slug"]
 #        If project is given, only return items for that project.
