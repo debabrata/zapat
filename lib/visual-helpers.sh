@@ -107,7 +107,7 @@ start_dev_server() {
     local dev_cmd="${2:-npm run dev}"
     local port="${3:-3000}"
 
-    cd "$worktree_dir"
+    cd "$worktree_dir" || return 1
 
     # Install dependencies if needed
     if [[ -f "package.json" ]] && [[ ! -d "node_modules" ]]; then
@@ -255,6 +255,7 @@ PLAYWRIGHT_EOF
 # Checks repos.conf for per-repo overrides, falls back to defaults.
 # Usage: get_dev_server_cmd "repo" "worktree_dir"
 # Sets: VISUAL_DEV_CMD, VISUAL_DEV_PORT, VISUAL_PAGES
+# shellcheck disable=SC2034  # VISUAL_* vars are used by callers
 get_dev_server_config() {
     local repo="$1" worktree_dir="$2"
 

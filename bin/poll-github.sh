@@ -961,7 +961,7 @@ It will be auto-merged in **${DELAY_HOURS} hours** unless a \`hold\` label is ad
                     if [[ "$HAS_HIGH_COMMENT" -lt 1 ]]; then
                         RISK_REASONS=$(echo "$RISK_JSON" | jq -r '.reasons | join(", ")' 2>/dev/null || echo "See risk analysis")
                         RISK_SCORE=$(echo "$RISK_JSON" | jq -r '.score // "?"' 2>/dev/null || echo "?")
-                        local risk_detail="<!-- high-risk-review-needed -->
+                        risk_detail="<!-- high-risk-review-needed -->
 **Risk score:** ${RISK_SCORE} (threshold: 8)
 **Risk factors:** ${RISK_REASONS}"
                         post_handoff_comment "$repo" "$MERGE_PR_NUM" "high_risk" "$risk_detail" || {

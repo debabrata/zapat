@@ -12,12 +12,11 @@ generate_handoff_context() {
     local project="${CURRENT_PROJECT:-default}"
 
     # --- Gather common context ---
-    local pr_json pr_title pr_branch pr_body
+    local pr_json pr_title pr_branch
     pr_json=$(gh pr view "$pr_number" --repo "$repo" \
-        --json title,headRefName,body,commits,files,additions,deletions,labels,reviews 2>/dev/null || echo "{}")
+        --json title,headRefName,commits,files,additions,deletions,labels,reviews 2>/dev/null || echo "{}")
     pr_title=$(echo "$pr_json" | jq -r '.title // "Unknown"')
     pr_branch=$(echo "$pr_json" | jq -r '.headRefName // "unknown"')
-    pr_body=$(echo "$pr_json" | jq -r '.body // ""' | head -50)
     local files_changed additions deletions
     files_changed=$(echo "$pr_json" | jq -r '.files | length' 2>/dev/null || echo "0")
     additions=$(echo "$pr_json" | jq -r '.additions // 0')
@@ -105,7 +104,6 @@ generate_handoff_context() {
     # --- Generate desktop deep link ---
     local deep_link_section=""
     if [[ "${HANDOFF_DEEP_LINK_ENABLED:-false}" == "true" ]]; then
-        local encoded_prompt="Review PR %23${pr_number} in ${repo}. The pipeline escalated because: ${reason_title}."
         deep_link_section="
 ### Quick Resume
 Open in Claude Code Desktop: \`claude \"Review PR #${pr_number} in ${repo}\"\`"

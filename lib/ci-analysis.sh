@@ -149,7 +149,7 @@ extract_failure_context() {
 
     # Extract just the error section (between code fences if present)
     local context
-    context=$(echo "$test_comment" | sed -n '/```/,/```/p' | head -80)
+    context=$(echo "$test_comment" | sed -n "/\`\`\`/,/\`\`\`/p" | head -80)
 
     if [[ -z "$context" ]]; then
         # No code fences, take the last 40 lines

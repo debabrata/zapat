@@ -144,7 +144,7 @@ else
         --add-label "needs-rebase" 2>/dev/null || log_warn "Failed to add needs-rebase label"
 
     # Post handoff comment with conflict context
-    local conflict_details="**Rebase target:** \`${BASE_BRANCH}\`
+    conflict_details="**Rebase target:** \`${BASE_BRANCH}\`
 
 <details>
 <summary>Conflict output</summary>
