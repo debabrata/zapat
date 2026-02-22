@@ -857,12 +857,19 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
     # --- Auto-Merge Gate ---
     if [[ "${AUTO_MERGE_ENABLED:-true}" == "true" ]]; then
-        MERGE_PRS_JSON=$(gh_safe 'gh pr list --repo "'"$repo"'" --json number,headRefName,labels --state open') || { RATE_LIMIT_LOW="hit"; continue; }
+        MERGE_PRS_JSON=$(gh_safe 'gh pr list --repo "'"$repo"'" --json number,headRefName,baseRefName,labels --state open') || { RATE_LIMIT_LOW="hit"; continue; }
 
         MERGE_PRS_COUNT=$(echo "$MERGE_PRS_JSON" | jq 'length')
         for ((i=0; i<MERGE_PRS_COUNT; i++)); do
             MERGE_PR_NUM=$(echo "$MERGE_PRS_JSON" | jq -r ".[$i].number")
+            MERGE_PR_BASE=$(echo "$MERGE_PRS_JSON" | jq -r ".[$i].baseRefName // \"main\"")
             MERGE_PR_HAS_HOLD=$(echo "$MERGE_PRS_JSON" | jq -r ".[$i].labels | map(.name) | index(\"hold\") // empty")
+
+            # Skip PRs not targeting main — sub-PRs targeting feature branches need manual merge
+            if [[ "$MERGE_PR_BASE" != "main" ]]; then
+                log_info "Skipping auto-merge for PR #${MERGE_PR_NUM} — targets feature branch '${MERGE_PR_BASE}', not main"
+                continue
+            fi
 
             # Skip if has hold label
             if [[ -n "$MERGE_PR_HAS_HOLD" ]]; then
@@ -900,6 +907,15 @@ while IFS=$'\t' read -r repo local_path repo_type; do
                             --message "Auto-merged low-risk PR #${MERGE_PR_NUM} in ${repo}" \
                             --job-name "auto-merge" \
                             --status success 2>/dev/null || true
+                        # Post-merge health check
+                        if ! "$SCRIPT_DIR/bin/zapat" health --json 2>/dev/null | jq -e '.healthy' &>/dev/null; then
+                            log_warn "Post-merge health check failed after merging PR #${MERGE_PR_NUM}"
+                            "$SCRIPT_DIR/bin/notify.sh" \
+                                --slack \
+                                --message "Post-merge health check FAILED after merging PR #${MERGE_PR_NUM} in ${repo}. Run: bin/zapat health --auto-fix" \
+                                --job-name "post-merge-health" \
+                                --status warning 2>/dev/null || true
+                        fi
                     fi
                     ;;
                 medium)
@@ -930,6 +946,15 @@ It will be auto-merged in **${DELAY_HOURS} hours** unless a \`hold\` label is ad
                                             --message "Auto-merged medium-risk PR #${MERGE_PR_NUM} in ${repo} after ${DELAY_HOURS}h delay" \
                                             --job-name "auto-merge" \
                                             --status success 2>/dev/null || true
+                                        # Post-merge health check
+                                        if ! "$SCRIPT_DIR/bin/zapat" health --json 2>/dev/null | jq -e '.healthy' &>/dev/null; then
+                                            log_warn "Post-merge health check failed after merging PR #${MERGE_PR_NUM}"
+                                            "$SCRIPT_DIR/bin/notify.sh" \
+                                                --slack \
+                                                --message "Post-merge health check FAILED after merging PR #${MERGE_PR_NUM} in ${repo}. Run: bin/zapat health --auto-fix" \
+                                                --job-name "post-merge-health" \
+                                                --status warning 2>/dev/null || true
+                                        fi
                                     fi
                                 fi
                             fi

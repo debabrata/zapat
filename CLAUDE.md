@@ -50,3 +50,17 @@ GitHub Issue (labeled) --> Poller --> Trigger Script --> Claude Code Agent Team 
 ```
 
 All jobs run in isolated git worktrees under `~/.zapat/worktrees/`.
+
+## Multi-PR Feature Branches
+
+For large features spanning multiple sub-issues, use a feature branch workflow:
+
+1. Create a feature branch from `main` (e.g., `feature/multi-provider-support`)
+2. Sub-PRs target the **feature branch**, not `main`
+3. Add `hold` label to sub-PRs to prevent auto-merge (auto-merge gate only merges PRs targeting `main`)
+4. Human merges sub-PRs into the feature branch manually
+5. Once all sub-PRs are merged, rebase the feature branch onto `main`
+6. Open a single integration PR from the feature branch to `main`
+7. The integration PR gets the full pipeline treatment (triage, review, test, auto-merge)
+
+**Important**: Never let the pipeline auto-merge sub-PRs targeting feature branches. The auto-merge gate skips PRs not targeting `main` by design.
