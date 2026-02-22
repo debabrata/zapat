@@ -146,8 +146,8 @@ if [[ "$KEEP_CRON" != "true" ]]; then
     EXISTING_CRON=$(crontab -l 2>/dev/null || true)
     if echo "$EXISTING_CRON" | grep -q '# --- Zapat'; then
         CLEANED_CRON=$(echo "$EXISTING_CRON" | sed '/^# --- Zapat/,/^# --- End Zapat/d')
-        # Remove trailing blank lines
-        CLEANED_CRON=$(echo "$CLEANED_CRON" | sed -e :a -e '/^\n*$/{$d;N;ba}')
+        # Remove trailing blank lines (awk works on both macOS and Linux)
+        CLEANED_CRON=$(printf '%s\n' "$CLEANED_CRON" | awk '/[^[:space:]]/{p=NR} {lines[NR]=$0} END{for(i=1;i<=p;i++) print lines[i]}')
         if [[ -z "$CLEANED_CRON" ]]; then
             crontab -r 2>/dev/null || true
         else
