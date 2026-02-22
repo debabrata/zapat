@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/item-state.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
+source "$SCRIPT_DIR/lib/handoff.sh"
 load_env
 
 # --- Args ---
@@ -200,15 +201,16 @@ REWORK_CYCLES=$(increment_rework_cycles "$REPO" "rework" "$PR_NUMBER" "$PROJECT_
 log_info "Rework cycle ${REWORK_CYCLES}/${MAX_REWORK_CYCLES} for PR #${PR_NUMBER}"
 
 if [[ "$REWORK_CYCLES" -ge "$MAX_REWORK_CYCLES" ]]; then
-    # Cycle limit reached — escalate to human
+    # Cycle limit reached — escalate to human with full context
     log_warn "Rework cycle limit reached (${REWORK_CYCLES}/${MAX_REWORK_CYCLES}) for PR #${PR_NUMBER}. Adding hold label."
     gh pr edit "$PR_NUMBER" --repo "$REPO" \
         --remove-label "zapat-rework" \
         --add-label "hold" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
-    gh pr comment "$PR_NUMBER" --repo "$REPO" \
-        --body "Rework cycle limit reached (${REWORK_CYCLES}/${MAX_REWORK_CYCLES}). Adding \`hold\` for human review.
-
-This PR has gone through ${REWORK_CYCLES} rework cycles without converging. A human should review the remaining feedback and decide how to proceed." 2>/dev/null || true
+    post_handoff_comment "$REPO" "$PR_NUMBER" "max_rework" || {
+        # Fallback to simple comment if handoff fails
+        gh pr comment "$PR_NUMBER" --repo "$REPO" \
+            --body "Rework cycle limit reached (${REWORK_CYCLES}/${MAX_REWORK_CYCLES}). Adding \`hold\` for human review." 2>/dev/null || true
+    }
     "$SCRIPT_DIR/bin/notify.sh" \
         --slack \
         --message "Rework cycle limit reached (${REWORK_CYCLES}/${MAX_REWORK_CYCLES}) on PR #${PR_NUMBER} (${PR_TITLE}) in ${REPO}.\nAdded \`hold\` label for human review.\nhttps://github.com/${REPO}/pull/${PR_NUMBER}" \

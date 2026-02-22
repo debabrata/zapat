@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/item-state.sh"
+source "$SCRIPT_DIR/lib/handoff.sh"
 load_env
 
 # --- Lock ---
@@ -623,6 +624,80 @@ while IFS=$'\t' read -r repo local_path repo_type; do
         DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
 
+    # --- PRs with zapat-visual label (visual verification) ---
+    if [[ "${VISUAL_VERIFY_ENABLED:-false}" == "true" ]]; then
+        VISUAL_JSON=$(gh_safe 'gh pr list --repo "'"$repo"'" --label "zapat-visual" --json number,title,labels,assignees --state open') || { RATE_LIMIT_LOW="hit"; continue; }
+
+        VISUAL_COUNT=$(echo "$VISUAL_JSON" | jq 'length')
+        for ((i=0; i<VISUAL_COUNT; i++)); do
+            VISUAL_NUM=$(echo "$VISUAL_JSON" | jq -r ".[$i].number")
+            VISUAL_TITLE=$(echo "$VISUAL_JSON" | jq -r ".[$i].title")
+            VISUAL_LABELS=$(echo "$VISUAL_JSON" | jq ".[$i].labels")
+            VISUAL_ASSIGNEES=$(echo "$VISUAL_JSON" | jq ".[$i].assignees")
+            VISUAL_KEY="${repo}#visual-pr${VISUAL_NUM}"
+
+            # Skip if already processed
+            if grep -qF "$VISUAL_KEY" "$PROCESSED_TESTING" 2>/dev/null; then
+                continue
+            fi
+            if ! should_process_item "$repo" "visual" "$VISUAL_NUM" "$project_slug"; then
+                continue
+            fi
+
+            if ! should_process "$VISUAL_LABELS" "$VISUAL_ASSIGNEES"; then
+                log_info "Skipping zapat-visual $VISUAL_KEY (governance: human-only or assigned)"
+                echo "$VISUAL_KEY" >> "$PROCESSED_TESTING"
+                continue
+            fi
+
+            TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
+            dispatch_limit_reached && continue
+            log_info "Processing zapat-visual: $VISUAL_KEY — $VISUAL_TITLE (project: $project_slug)"
+            create_item_state "$repo" "visual" "$VISUAL_NUM" "pending" "$project_slug" >/dev/null || true
+            "$SCRIPT_DIR/triggers/on-visual-verify.sh" "$repo" "$VISUAL_NUM" "" "$project_slug" &
+            echo "$VISUAL_KEY" >> "$PROCESSED_TESTING"
+            TOTAL_PRS=$((TOTAL_PRS + 1))
+            DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
+        done
+    fi
+
+    # --- PRs with zapat-ci-fix label (CI auto-fix) ---
+    if [[ "${CI_AUTOFIX_ENABLED:-false}" == "true" ]]; then
+        CI_FIX_JSON=$(gh_safe 'gh pr list --repo "'"$repo"'" --label "zapat-ci-fix" --json number,title,labels,assignees --state open') || { RATE_LIMIT_LOW="hit"; continue; }
+
+        CI_FIX_COUNT=$(echo "$CI_FIX_JSON" | jq 'length')
+        for ((i=0; i<CI_FIX_COUNT; i++)); do
+            CI_FIX_NUM=$(echo "$CI_FIX_JSON" | jq -r ".[$i].number")
+            CI_FIX_TITLE=$(echo "$CI_FIX_JSON" | jq -r ".[$i].title")
+            CI_FIX_LABELS=$(echo "$CI_FIX_JSON" | jq ".[$i].labels")
+            CI_FIX_ASSIGNEES=$(echo "$CI_FIX_JSON" | jq ".[$i].assignees")
+            CI_FIX_KEY="${repo}#ci-fix-pr${CI_FIX_NUM}"
+
+            # Skip if already processed
+            if grep -qF "$CI_FIX_KEY" "$PROCESSED_TESTING" 2>/dev/null; then
+                continue
+            fi
+            if ! should_process_item "$repo" "ci-fix" "$CI_FIX_NUM" "$project_slug"; then
+                continue
+            fi
+
+            if ! should_process "$CI_FIX_LABELS" "$CI_FIX_ASSIGNEES"; then
+                log_info "Skipping zapat-ci-fix $CI_FIX_KEY (governance: human-only or assigned)"
+                echo "$CI_FIX_KEY" >> "$PROCESSED_TESTING"
+                continue
+            fi
+
+            TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
+            dispatch_limit_reached && continue
+            log_info "Processing zapat-ci-fix: $CI_FIX_KEY — $CI_FIX_TITLE (project: $project_slug)"
+            create_item_state "$repo" "ci-fix" "$CI_FIX_NUM" "pending" "$project_slug" >/dev/null || true
+            "$SCRIPT_DIR/triggers/on-ci-fix.sh" "$repo" "$CI_FIX_NUM" "" "$project_slug" &
+            echo "$CI_FIX_KEY" >> "$PROCESSED_TESTING"
+            TOTAL_PRS=$((TOTAL_PRS + 1))
+            DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
+        done
+    fi
+
     # --- Issues with agent-write-tests label (test writing) ---
     WRITE_TESTS_JSON=$(gh_safe 'gh issue list --repo "'"$repo"'" --label "agent-write-tests" --json number,title,labels,assignees --state open') || { RATE_LIMIT_LOW="hit"; continue; }
 
@@ -885,12 +960,18 @@ It will be auto-merged in **${DELAY_HOURS} hours** unless a \`hold\` label is ad
                     HAS_HIGH_COMMENT=$(echo "$PR_COMMENTS" | grep -c "high-risk-review-needed" 2>/dev/null || echo "0")
                     if [[ "$HAS_HIGH_COMMENT" -lt 1 ]]; then
                         RISK_REASONS=$(echo "$RISK_JSON" | jq -r '.reasons | join(", ")' 2>/dev/null || echo "See risk analysis")
-                        gh pr comment "$MERGE_PR_NUM" --repo "$repo" --body "<!-- high-risk-review-needed -->
+                        RISK_SCORE=$(echo "$RISK_JSON" | jq -r '.score // "?"' 2>/dev/null || echo "?")
+                        risk_detail="<!-- high-risk-review-needed -->
+**Risk score:** ${RISK_SCORE} (threshold: 8)
+**Risk factors:** ${RISK_REASONS}"
+                        post_handoff_comment "$repo" "$MERGE_PR_NUM" "high_risk" "$risk_detail" || {
+                            gh pr comment "$MERGE_PR_NUM" --repo "$repo" --body "<!-- high-risk-review-needed -->
 This PR is classified as **high risk** and requires human review before merging.
 
 **Risk factors**: ${RISK_REASONS}
 
 Please review and merge manually." 2>/dev/null || true
+                        }
                         "$SCRIPT_DIR/bin/notify.sh" \
                             --slack \
                             --message "High-risk PR #${MERGE_PR_NUM} in ${repo} needs human review.\nhttps://github.com/${repo}/pull/${MERGE_PR_NUM}" \

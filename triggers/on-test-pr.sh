@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/item-state.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
+source "$SCRIPT_DIR/lib/ci-analysis.sh"
+source "$SCRIPT_DIR/lib/visual-helpers.sh"
 load_env
 
 # --- Args ---
@@ -161,17 +163,48 @@ fi
 
 # --- Update labels based on test outcome (sequential flow) ---
 if [[ "$TEST_PASSED" == "true" ]]; then
-    # Tests passed: move to review
-    gh pr edit "$PR_NUMBER" --repo "$REPO" \
-        --remove-label "zapat-testing" \
-        --add-label "zapat-review" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
-    log_info "Tests passed for PR #${PR_NUMBER}, added zapat-review label"
+    # Tests passed: reset CI fix counter
+    reset_ci_fix_attempts "$REPO" "test" "$PR_NUMBER" "$PROJECT_SLUG" 2>/dev/null || true
+
+    # Check if visual verification is applicable
+    if should_visual_verify "$REPO" "$PR_NUMBER" "$REPO_TYPE"; then
+        gh pr edit "$PR_NUMBER" --repo "$REPO" \
+            --remove-label "zapat-testing" \
+            --add-label "zapat-visual" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+        log_info "Tests passed for PR #${PR_NUMBER}, added zapat-visual label for visual verification"
+    else
+        gh pr edit "$PR_NUMBER" --repo "$REPO" \
+            --remove-label "zapat-testing" \
+            --add-label "zapat-review" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+        log_info "Tests passed for PR #${PR_NUMBER}, added zapat-review label"
+    fi
 else
-    # Tests failed: send back to rework
-    gh pr edit "$PR_NUMBER" --repo "$REPO" \
-        --remove-label "zapat-testing" \
-        --add-label "zapat-rework" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
-    log_info "Tests failed for PR #${PR_NUMBER}, added zapat-rework label for fixes"
+    # Tests failed: check if CI auto-fix can handle it
+    if [[ "${CI_AUTOFIX_ENABLED:-false}" == "true" ]]; then
+        FAILURE_TYPE=$(classify_ci_failure "$REPO" "$PR_NUMBER")
+        CI_FIX_ATTEMPTS=$(get_ci_fix_attempts "$REPO" "test" "$PR_NUMBER" "$PROJECT_SLUG")
+        MAX_CI_FIX=${MAX_CI_FIX_ATTEMPTS:-2}
+
+        if [[ "$FAILURE_TYPE" == "trivial" && "$CI_FIX_ATTEMPTS" -lt "$MAX_CI_FIX" ]]; then
+            # Trivial failure within attempt limit: dispatch lightweight CI fix
+            gh pr edit "$PR_NUMBER" --repo "$REPO" \
+                --remove-label "zapat-testing" \
+                --add-label "zapat-ci-fix" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+            log_info "Trivial CI failure on PR #${PR_NUMBER}, dispatching auto-fix (attempt $((CI_FIX_ATTEMPTS + 1))/${MAX_CI_FIX})"
+        else
+            # Substantive failure or CI fix attempts exhausted: full rework
+            gh pr edit "$PR_NUMBER" --repo "$REPO" \
+                --remove-label "zapat-testing" \
+                --add-label "zapat-rework" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+            log_info "Tests failed for PR #${PR_NUMBER} (${FAILURE_TYPE}), added zapat-rework label for fixes"
+        fi
+    else
+        # CI auto-fix disabled: send back to rework
+        gh pr edit "$PR_NUMBER" --repo "$REPO" \
+            --remove-label "zapat-testing" \
+            --add-label "zapat-rework" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+        log_info "Tests failed for PR #${PR_NUMBER}, added zapat-rework label for fixes"
+    fi
 fi
 
 # --- Record Metrics ---
