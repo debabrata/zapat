@@ -10,6 +10,7 @@ TMUX_SESSION="${TMUX_SESSION:-zapat}"
 # to hardcoded Claude defaults for backward compatibility.
 _TMUX_HELPERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${_TMUX_HELPERS_DIR}/provider.sh" ]]; then
+    # shellcheck source=lib/provider.sh
     source "${_TMUX_HELPERS_DIR}/provider.sh"
     PANE_PATTERN_ACCOUNT_LIMIT="$(provider_get_account_limit_pattern)"
     PANE_PATTERN_RATE_LIMIT="$(provider_get_rate_limit_pattern)"

@@ -1064,7 +1064,7 @@ while IFS= read -r state_file; do
     set_project "$item_project"
 
     # Detect provider from item labels
-    local retry_labels=""
+    retry_labels=""
     case "$item_type" in
         pr|rework|test)
             retry_labels=$(gh pr view "$item_number" --repo "$item_repo" --json labels \
