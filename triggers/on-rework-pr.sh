@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/item-state.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
+source "$SCRIPT_DIR/lib/handoff.sh"
 load_env
 
 # --- Args ---
@@ -31,7 +32,7 @@ log_info "Starting rework for PR #${PR_NUMBER} in ${REPO} (project: $PROJECT_SLU
 SLOT_DIR="$SCRIPT_DIR/state/agent-work-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_WORK:-10}
 ITEM_STATE_FILE=$(create_item_state "$REPO" "rework" "$PR_NUMBER" "running" "$PROJECT_SLUG") || true
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "rework" "$REPO" "$PR_NUMBER"; then
     log_info "At capacity ($MAX_CONCURRENT concurrent sessions), skipping rework PR #${PR_NUMBER}"
     [[ -n "${ITEM_STATE_FILE:-}" && -f "${ITEM_STATE_FILE:-}" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0
@@ -40,7 +41,7 @@ trap 'cleanup_on_exit "$SLOT_FILE" "$ITEM_STATE_FILE" $?' EXIT
 
 # --- Fetch PR Details ---
 PR_JSON=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
-    --json title,body,headRefName 2>/dev/null)
+    --json title,body,headRefName,files,additions,deletions,labels 2>/dev/null)
 
 if [[ -z "$PR_JSON" ]]; then
     log_error "Failed to fetch PR #${PR_NUMBER} from ${REPO}"
@@ -50,6 +51,11 @@ fi
 PR_TITLE=$(echo "$PR_JSON" | jq -r '.title // "No title"')
 PR_BODY=$(echo "$PR_JSON" | jq -r '.body // "No description"')
 PR_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName // ""')
+PR_FILES=$(echo "$PR_JSON" | jq -r '.files[].path' 2>/dev/null | head -100 || echo "")
+PR_ADDITIONS=$(echo "$PR_JSON" | jq -r '.additions // 0')
+PR_DELETIONS=$(echo "$PR_JSON" | jq -r '.deletions // 0')
+PR_FILES_CHANGED=$(echo "$PR_JSON" | jq -r '.files | length' 2>/dev/null || echo "0")
+PR_LABELS=$(echo "$PR_JSON" | jq -r '[.labels[].name] | join(", ")' 2>/dev/null || echo "")
 
 if [[ -z "$PR_BRANCH" ]]; then
     log_error "Could not determine branch for PR #${PR_NUMBER}"
@@ -79,9 +85,11 @@ ${ISSUE_COMMENTS}"
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -130,6 +138,22 @@ git worktree add "$WORKTREE_DIR" "origin/${PR_BRANCH}" 2>/dev/null || {
 
 log_info "Worktree created at $WORKTREE_DIR on branch $PR_BRANCH"
 
+# --- Classify Complexity ---
+COMPLEXITY=$(classify_complexity "$PR_FILES_CHANGED" "$PR_ADDITIONS" "$PR_DELETIONS" "$PR_FILES" "$PR_BODY")
+
+# Override: agent-full-review label forces full team
+if echo "$PR_LABELS" | grep -qiw "agent-full-review"; then
+    COMPLEXITY="full"
+    log_info "Complexity overridden to 'full' by agent-full-review label"
+fi
+
+log_info "Complexity classification: $COMPLEXITY for rework PR #${PR_NUMBER}"
+_log_structured "info" "Complexity classified" "\"complexity\":\"$COMPLEXITY\",\"job_type\":\"rework\",\"pr\":$PR_NUMBER,\"repo\":\"$REPO\""
+
+TASK_ASSESSMENT=$(generate_task_assessment "$COMPLEXITY" "rework")
+# --- Copy slim CLAUDE.md into worktree ---
+cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$WORKTREE_DIR/CLAUDE.md"
+
 # --- Build Prompt ---
 FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/rework-pr.txt" \
     "REPO=$REPO" \
@@ -137,8 +161,11 @@ FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/rework-pr.txt" \
     "PR_TITLE=$PR_TITLE" \
     "PR_BODY=$PR_BODY" \
     "PR_BRANCH=$PR_BRANCH" \
+    "COMPLEXITY=$COMPLEXITY" \
+    "TASK_ASSESSMENT=$TASK_ASSESSMENT" \
     "REVIEW_COMMENTS=$ALL_FEEDBACK" \
-    "PR_REVIEWS=$PR_REVIEWS")
+    "PR_REVIEWS=$PR_REVIEWS" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file
 PROMPT_FILE=$(mktemp)
@@ -168,20 +195,41 @@ fi
 
 log_info "Agent-rework session ended for PR #${PR_NUMBER}"
 
-# --- Update Labels ---
-# Remove zapat-rework, re-add zapat-review for another review pass, add zapat-testing for automated testing
-gh pr edit "$PR_NUMBER" --repo "$REPO" \
-    --remove-label "zapat-rework" \
-    --add-label "zapat-review" \
-    --add-label "zapat-testing" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
-log_info "Added zapat-review and zapat-testing labels to PR #${PR_NUMBER}"
+# --- Rework Cycle Counter ---
+MAX_REWORK_CYCLES=${MAX_REWORK_CYCLES:-3}
+REWORK_CYCLES=$(increment_rework_cycles "$REPO" "rework" "$PR_NUMBER" "$PROJECT_SLUG")
+log_info "Rework cycle ${REWORK_CYCLES}/${MAX_REWORK_CYCLES} for PR #${PR_NUMBER}"
 
-# --- Notify ---
-"$SCRIPT_DIR/bin/notify.sh" \
-    --slack \
-    --message "Agent team addressed review feedback on PR #${PR_NUMBER} (${PR_TITLE}) in ${REPO}.\nThe PR has been re-labeled with zapat-review for another review pass." \
-    --job-name "agent-rework" \
-    --status success || log_warn "Slack notification failed"
+if [[ "$REWORK_CYCLES" -ge "$MAX_REWORK_CYCLES" ]]; then
+    # Cycle limit reached — escalate to human with full context
+    log_warn "Rework cycle limit reached (${REWORK_CYCLES}/${MAX_REWORK_CYCLES}) for PR #${PR_NUMBER}. Adding hold label."
+    gh pr edit "$PR_NUMBER" --repo "$REPO" \
+        --remove-label "zapat-rework" \
+        --add-label "hold" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+    post_handoff_comment "$REPO" "$PR_NUMBER" "max_rework" || {
+        # Fallback to simple comment if handoff fails
+        gh pr comment "$PR_NUMBER" --repo "$REPO" \
+            --body "Rework cycle limit reached (${REWORK_CYCLES}/${MAX_REWORK_CYCLES}). Adding \`hold\` for human review." 2>/dev/null || true
+    }
+    "$SCRIPT_DIR/bin/notify.sh" \
+        --slack \
+        --message "Rework cycle limit reached (${REWORK_CYCLES}/${MAX_REWORK_CYCLES}) on PR #${PR_NUMBER} (${PR_TITLE}) in ${REPO}.\nAdded \`hold\` label for human review.\nhttps://github.com/${REPO}/pull/${PR_NUMBER}" \
+        --job-name "agent-rework" \
+        --status warning || log_warn "Slack notification failed"
+else
+    # Under limit — proceed with sequential flow: rework → test → review
+    # Only add zapat-testing; zapat-review will be added by on-test-pr.sh after tests pass
+    gh pr edit "$PR_NUMBER" --repo "$REPO" \
+        --remove-label "zapat-rework" \
+        --add-label "zapat-testing" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+    log_info "Added zapat-testing label to PR #${PR_NUMBER} (review will follow after tests pass)"
+
+    "$SCRIPT_DIR/bin/notify.sh" \
+        --slack \
+        --message "Agent team addressed review feedback on PR #${PR_NUMBER} (${PR_TITLE}) in ${REPO} (cycle ${REWORK_CYCLES}/${MAX_REWORK_CYCLES}).\nQueued for testing; review will follow after tests pass." \
+        --job-name "agent-rework" \
+        --status success || log_warn "Slack notification failed"
+fi
 
 # --- Cleanup Worktree ---
 cd "$REPO_PATH"

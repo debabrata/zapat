@@ -7,6 +7,7 @@ export interface StageConfig {
 export interface PipelineConfig {
   name: string
   refreshInterval: number
+  defaultProject?: string
   stages: StageConfig[]
   dataSources: {
     automationDir: string
@@ -46,13 +47,35 @@ export interface HealthCheck {
   message: string
 }
 
+export interface SlotInfo {
+  pid: number
+  job_type: string
+  repo: string
+  number: string
+  started_at: string
+}
+
 export interface SystemStatus {
   healthy: boolean
   sessionExists: boolean
   windowCount: number
   activeSlots: number
   maxSlots: number
+  slots: SlotInfo[]
   checks: HealthCheck[]
+}
+
+export type GitHubEventType = 'pr_created' | 'pr_merged' | 'pr_reviewed' | 'pr_approved' | 'issue_triaged' | 'issue_researched' | 'issue_closed'
+
+export interface GitHubEvent {
+  id: string
+  type: GitHubEventType
+  repo: string
+  number: number
+  title: string
+  url: string
+  timestamp: string
+  summary?: string
 }
 
 export interface ChartDataPoint {

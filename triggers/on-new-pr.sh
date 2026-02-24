@@ -30,7 +30,7 @@ ITEM_STATE_FILE=$(create_item_state "$REPO" "pr" "$PR_NUMBER" "running" "$PROJEC
 # --- Concurrency Slot ---
 SLOT_DIR="$SCRIPT_DIR/state/triage-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_TRIAGE:-${MAX_CONCURRENT_WORK:-10}}
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "review" "$REPO" "$PR_NUMBER"; then
     log_warn "At capacity ($MAX_CONCURRENT concurrent triage sessions), deferring PR #${PR_NUMBER} (will retry in ~5 min)"
     [[ -n "$ITEM_STATE_FILE" && -f "$ITEM_STATE_FILE" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0
@@ -55,22 +55,22 @@ fi
 PR_TITLE=$(echo "$PR_JSON" | jq -r '.title // "No title"')
 PR_BODY=$(echo "$PR_JSON" | jq -r '.body // "No description"')
 PR_FILES=$(echo "$PR_JSON" | jq -r '.files[].path' 2>/dev/null | head -100 || echo "Unable to list files")
+PR_ADDITIONS=$(echo "$PR_JSON" | jq -r '.additions // 0')
+PR_DELETIONS=$(echo "$PR_JSON" | jq -r '.deletions // 0')
+PR_FILES_CHANGED=$(echo "$PR_JSON" | jq -r '.files | length' 2>/dev/null || echo "0")
 
 # --- Fetch Diff ---
 PR_DIFF=$(gh pr diff "$PR_NUMBER" --repo "$REPO" 2>/dev/null || echo "Unable to fetch diff")
 
-# Truncate diff if too large (50K chars)
-if [[ ${#PR_DIFF} -gt 50000 ]]; then
-    PR_DIFF="${PR_DIFF:0:49000}
-
-... (diff truncated at 50K chars — review full diff on GitHub)"
-fi
+# Diff truncation is handled centrally in lib/common.sh
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -101,6 +101,25 @@ trap '
     cleanup_on_exit "" "$ITEM_STATE_FILE" $?
 ' EXIT
 
+# --- Classify Complexity ---
+# Fetch PR labels for override check
+PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '[.labels[].name] | join(", ")' 2>/dev/null || echo "")
+
+COMPLEXITY=$(classify_complexity "$PR_FILES_CHANGED" "$PR_ADDITIONS" "$PR_DELETIONS" "$PR_FILES" "$PR_BODY")
+
+# Override: agent-full-review label forces full team
+if echo "$PR_LABELS" | grep -qiw "agent-full-review"; then
+    COMPLEXITY="full"
+    log_info "Complexity overridden to 'full' by agent-full-review label"
+fi
+
+log_info "Complexity classification: $COMPLEXITY for PR #${PR_NUMBER}"
+_log_structured "info" "Complexity classified" "\"complexity\":\"$COMPLEXITY\",\"job_type\":\"review\",\"pr\":$PR_NUMBER,\"repo\":\"$REPO\""
+
+TASK_ASSESSMENT=$(generate_task_assessment "$COMPLEXITY" "review")
+# --- Copy slim CLAUDE.md into worktree ---
+cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$EFFECTIVE_PATH/CLAUDE.md"
+
 # --- Build Mention Context Block ---
 MENTION_BLOCK=""
 if [[ -n "$MENTION_CONTEXT" ]]; then
@@ -119,7 +138,10 @@ FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/pr-review.txt" \
     "PR_BODY=$PR_BODY" \
     "PR_FILES=$PR_FILES" \
     "PR_DIFF=$PR_DIFF" \
-    "MENTION_CONTEXT=$MENTION_BLOCK")
+    "COMPLEXITY=$COMPLEXITY" \
+    "TASK_ASSESSMENT=$TASK_ASSESSMENT" \
+    "MENTION_CONTEXT=$MENTION_BLOCK" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file (avoids tmux send-keys escaping issues)
 PROMPT_FILE=$(mktemp)

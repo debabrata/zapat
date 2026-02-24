@@ -30,7 +30,7 @@ ITEM_STATE_FILE=$(create_item_state "$REPO" "issue" "$ISSUE_NUMBER" "running" "$
 # --- Concurrency Slot ---
 SLOT_DIR="$SCRIPT_DIR/state/triage-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_TRIAGE:-${MAX_CONCURRENT_WORK:-10}}
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "triage" "$REPO" "$ISSUE_NUMBER"; then
     log_warn "At capacity ($MAX_CONCURRENT concurrent triage sessions), deferring issue #${ISSUE_NUMBER} (will retry in ~5 min)"
     [[ -n "$ITEM_STATE_FILE" && -f "$ITEM_STATE_FILE" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0
@@ -58,9 +58,11 @@ ISSUE_LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | join(", ")' 2>/dev
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -91,6 +93,9 @@ trap '
     cleanup_on_exit "" "$ITEM_STATE_FILE" $?
 ' EXIT
 
+# --- Copy slim CLAUDE.md into worktree ---
+cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$EFFECTIVE_PATH/CLAUDE.md"
+
 # --- Build Mention Context Block ---
 MENTION_BLOCK=""
 if [[ -n "$MENTION_CONTEXT" ]]; then
@@ -108,7 +113,8 @@ FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/issue-triage.txt" \
     "ISSUE_TITLE=$ISSUE_TITLE" \
     "ISSUE_BODY=$ISSUE_BODY" \
     "ISSUE_LABELS=$ISSUE_LABELS" \
-    "MENTION_CONTEXT=$MENTION_BLOCK")
+    "MENTION_CONTEXT=$MENTION_BLOCK" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file (avoids tmux send-keys escaping issues)
 PROMPT_FILE=$(mktemp)
@@ -170,7 +176,23 @@ elif echo "$CURRENT_LABELS" | grep -q "agent-research"; then
     TRIAGE_DETAILS="${TRIAGE_DETAILS} agent-research label added (research team queued)."
     TRIAGE_STATUS="${TRIAGE_STATUS:-success}"
 else
-    TRIAGE_DETAILS="${TRIAGE_DETAILS} No agent-work/agent-research label (may need human decision)."
+    # Belt-and-suspenders: if the agent recommended a label in the triage comment
+    # but didn't apply it via gh CLI, apply it now.
+    LAST_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+        --jq '.[-1].body // ""' 2>/dev/null || echo "")
+    if echo "$LAST_COMMENT" | grep -qiE '(recommended labels|recommend.*label).*agent-work'; then
+        log_info "Agent recommended agent-work in comment but didn't apply it — applying now"
+        gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "agent-work" 2>/dev/null || true
+        TRIAGE_DETAILS="${TRIAGE_DETAILS} agent-work label applied from triage recommendation (implementation queued)."
+        TRIAGE_STATUS="${TRIAGE_STATUS:-success}"
+    elif echo "$LAST_COMMENT" | grep -qiE '(recommended labels|recommend.*label).*agent-research'; then
+        log_info "Agent recommended agent-research in comment but didn't apply it — applying now"
+        gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "agent-research" 2>/dev/null || true
+        TRIAGE_DETAILS="${TRIAGE_DETAILS} agent-research label applied from triage recommendation (research team queued)."
+        TRIAGE_STATUS="${TRIAGE_STATUS:-success}"
+    else
+        TRIAGE_DETAILS="${TRIAGE_DETAILS} No agent-work/agent-research label (may need human decision)."
+    fi
 fi
 
 # Default to success if no warnings

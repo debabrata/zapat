@@ -403,18 +403,29 @@ release_lock() {
 # --- Slot-based Concurrency ---
 
 # Acquire a concurrency slot. Allows up to MAX concurrent sessions.
-# Usage: acquire_slot "state/agent-work-slots" 10
+# Usage: acquire_slot "state/agent-work-slots" 10 [job_type] [repo] [number]
 # Returns 0 on success (slot file path in $SLOT_FILE), 1 if at capacity.
+# Slot file is JSON: {"pid":…,"job_type":…,"repo":…,"number":…,"started_at":…}
 acquire_slot() {
     local slot_dir="$1"
     local max_concurrent="${2:-10}"
+    local job_type="${3:-unknown}"
+    local repo="${4:-}"
+    local number="${5:-}"
     mkdir -p "$slot_dir"
 
     # Clean up stale slots (process no longer running)
     for slot in "$slot_dir"/slot-*.pid; do
         [[ -f "$slot" ]] || continue
         local pid
-        pid=$(cat "$slot" 2>/dev/null || echo "")
+        # Support both legacy plain-PID files and new JSON files
+        local content
+        content=$(cat "$slot" 2>/dev/null || echo "")
+        if echo "$content" | grep -q '^{'; then
+            pid=$(echo "$content" | grep -o '"pid":[0-9]*' | grep -o '[0-9]*')
+        else
+            pid="$content"
+        fi
         if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
             log_warn "Removing stale slot $slot (pid: $pid)"
             rm -f "$slot"
@@ -429,9 +440,12 @@ acquire_slot() {
         return 1
     fi
 
-    # Create slot
+    # Create slot with metadata
     SLOT_FILE="$slot_dir/slot-$$.pid"
-    echo $$ > "$SLOT_FILE"
+    local started_at
+    started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    printf '{"pid":%s,"job_type":"%s","repo":"%s","number":"%s","started_at":"%s"}\n' \
+        "$$" "$job_type" "$repo" "$number" "$started_at" > "$SLOT_FILE"
     log_info "Slot acquired: $SLOT_FILE ($((active + 1))/$max_concurrent active)"
     return 0
 }
@@ -549,8 +563,11 @@ cleanup_readonly_worktree() {
 
 # Read agents.conf for the current project and set role variables
 # Sets: BUILDER_AGENT, SECURITY_AGENT, PRODUCT_AGENT, UX_AGENT, plus any custom roles
+# Optional second parameter: repo_type (e.g., "ios", "web", "backend", "extension")
+# When provided, lines like "builder.ios=ios-engineer" override the default "builder=engineer"
 read_agents_conf() {
     local slug="${1:-${CURRENT_PROJECT:-default}}"
+    local repo_type="${2:-}"
     local conf
     conf="$(project_config_dir "$slug")/agents.conf"
     if [[ ! -f "$conf" ]]; then
@@ -561,19 +578,48 @@ read_agents_conf() {
         UX_AGENT="ux-reviewer"
         return 0
     fi
+
+    # PASS 1: Load role=persona defaults
     while IFS='=' read -r role persona; do
         [[ -z "$role" || "$role" =~ ^[[:space:]]*# ]] && continue
         role=$(echo "$role" | xargs)
         persona=$(echo "$persona" | xargs)
+        # Skip repo-type overrides (contain a dot) in pass 1
+        [[ "$role" == *.* ]] && continue
         case "$role" in
             builder)    BUILDER_AGENT="$persona" ;;
             security)   SECURITY_AGENT="$persona" ;;
             product)    PRODUCT_AGENT="$persona" ;;
             ux)         UX_AGENT="$persona" ;;
             compliance) COMPLIANCE_AGENT="$persona" ;;
-            *)          export "AGENT_${role^^}=$persona" ;;
+            *)          local upper_role; upper_role=$(echo "$role" | tr '[:lower:]' '[:upper:]')
+                        export "AGENT_${upper_role}=$persona" ;;
         esac
     done < "$conf"
+
+    # PASS 2: Overlay role.<repo_type>=persona overrides
+    if [[ -n "$repo_type" ]]; then
+        while IFS='=' read -r role persona; do
+            [[ -z "$role" || "$role" =~ ^[[:space:]]*# ]] && continue
+            role=$(echo "$role" | xargs)
+            persona=$(echo "$persona" | xargs)
+            # Only process lines matching role.<repo_type>
+            [[ "$role" != *.* ]] && continue
+            local base_role="${role%%.*}"
+            local override_type="${role#*.}"
+            [[ "$override_type" != "$repo_type" ]] && continue
+            case "$base_role" in
+                builder)    BUILDER_AGENT="$persona" ;;
+                security)   SECURITY_AGENT="$persona" ;;
+                product)    PRODUCT_AGENT="$persona" ;;
+                ux)         UX_AGENT="$persona" ;;
+                compliance) COMPLIANCE_AGENT="$persona" ;;
+                *)          local upper_base; upper_base=$(echo "$base_role" | tr '[:lower:]' '[:upper:]')
+                            export "AGENT_${upper_base}=$persona" ;;
+            esac
+        done < "$conf"
+    fi
+
     # Ensure defaults for any unset roles
     BUILDER_AGENT="${BUILDER_AGENT:-engineer}"
     SECURITY_AGENT="${SECURITY_AGENT:-security-reviewer}"
@@ -624,9 +670,19 @@ load_project_context() {
 
 # --- Prompt Substitution ---
 
+# Prompt Caching Notes:
+# Claude Code automatically caches static system prompt prefixes. The generated
+# prompt becomes part of the system prompt, so content order matters:
+#   - Static instructions (template text, shared footer) → cached across invocations
+#   - Dynamic placeholders ({{ISSUE_BODY}}, {{PR_DIFF}}) → vary per invocation
+# Templates should keep static instructions first and dynamic content (issue body,
+# PR diff, etc.) early in the details section. The shared footer (_shared-footer.txt)
+# is appended identically across all invocations, maximizing cache hits for the
+# trailing portion of the prompt.
+
 # Replace {{PLACEHOLDER}} in a file with values
 # Auto-injects: REPO_MAP, BUILDER_AGENT, SECURITY_AGENT, PRODUCT_AGENT, UX_AGENT,
-#               ORG_NAME, COMPLIANCE_RULES, PROJECT_CONTEXT
+#               ORG_NAME, COMPLIANCE_RULES, PROJECT_CONTEXT, SUBAGENT_MODEL, REPO_TYPE
 # Usage: substitute_prompt "template.txt" "DATE=2026-02-06" "ISSUE_NUMBER=42"
 substitute_prompt() {
     local template="$1"
@@ -634,8 +690,73 @@ substitute_prompt() {
     local content
     content=$(cat "$template")
 
-    # Auto-inject standard variables
-    read_agents_conf "" 2>/dev/null || true
+    # Append shared footer if it exists in the same directory
+    local footer_file
+    footer_file="$(dirname "$template")/_shared-footer.txt"
+    if [[ -f "$footer_file" ]]; then
+        content="${content}
+$(cat "$footer_file")"
+    fi
+
+    # Derive Task tool model shorthand from CLAUDE_SUBAGENT_MODEL env var
+    local _subagent_model="sonnet"
+    case "${CLAUDE_SUBAGENT_MODEL:-}" in
+        *opus*) _subagent_model="opus" ;;
+        *haiku*) _subagent_model="haiku" ;;
+        *sonnet*) _subagent_model="sonnet" ;;
+    esac
+
+    # Cap PR_DIFF at configurable limit (~40,000 characters ≈ ~10,000 tokens)
+    local max_diff_chars="${MAX_DIFF_CHARS:-40000}"
+    [[ "$max_diff_chars" =~ ^[0-9]+$ ]] || max_diff_chars=40000
+    local pr_number_val="" repo_val=""
+    local -a capped_args=()
+    for pair in "$@"; do
+        local key="${pair%%=*}"
+        local value="${pair#*=}"
+        case "$key" in
+            PR_NUMBER) pr_number_val="$value" ;;
+            REPO)      repo_val="$value" ;;
+        esac
+        if [[ "$key" == "PR_DIFF" && ${#value} -gt $max_diff_chars ]]; then
+            local total_lines total_chars
+            total_lines=$(printf '%s\n' "$value" | wc -l | tr -d ' ')
+            total_chars=${#value}
+            local shown_lines
+            shown_lines=$(printf '%s' "${value:0:$max_diff_chars}" | wc -l | tr -d ' ')
+            value="${value:0:$max_diff_chars}
+
+--- DIFF TRUNCATED ---
+Showing first ~${shown_lines} lines of ${total_lines} total lines (~${max_diff_chars} of ${total_chars} total chars).
+⚠️  All reviewers MUST fetch the full diff before reviewing:
+  gh pr diff ${pr_number_val} --repo ${repo_val}"
+        fi
+        capped_args+=("${key}=${value}")
+    done
+
+    # PASS 1: Apply explicit KEY=VALUE overrides first
+    # This ensures TASK_ASSESSMENT (which contains {{PLACEHOLDER}} tokens) is expanded
+    # before auto-injection resolves those inner tokens.
+    if [[ ${#capped_args[@]} -gt 0 ]]; then
+        for pair in "${capped_args[@]}"; do
+            local key="${pair%%=*}"
+            local value="${pair#*=}"
+            content="${content//\{\{${key}\}\}/${value}}"
+        done
+    fi
+
+    # PASS 2: Auto-inject standard variables (resolves all remaining {{PLACEHOLDER}} tokens)
+    # Extract REPO_TYPE from explicit args for repo-type-aware agent selection
+    local _repo_type=""
+    if [[ ${#capped_args[@]} -gt 0 ]]; then
+        for pair in "${capped_args[@]}"; do
+            if [[ "${pair%%=*}" == "REPO_TYPE" ]]; then
+                _repo_type="${pair#*=}"
+                break
+            fi
+        done
+    fi
+    read_agents_conf "" "$_repo_type" 2>/dev/null || true
     local repo_map
     repo_map=$(_generate_repo_map)
     local compliance_rules
@@ -652,13 +773,246 @@ substitute_prompt() {
     content="${content//\{\{COMPLIANCE_RULES\}\}/${compliance_rules}}"
     content="${content//\{\{PROJECT_CONTEXT\}\}/${project_context}}"
     content="${content//\{\{PROJECT_NAME\}\}/${CURRENT_PROJECT:-default}}"
-
-    # Apply explicit overrides
-    for pair in "$@"; do
-        local key="${pair%%=*}"
-        local value="${pair#*=}"
-        content="${content//\{\{${key}\}\}/${value}}"
-    done
+    content="${content//\{\{SUBAGENT_MODEL\}\}/${_subagent_model}}"
+    content="${content//\{\{REPO_TYPE\}\}/${_repo_type}}"
 
     echo "$content"
+}
+
+# --- Complexity Classification ---
+
+# Classify task complexity to determine team sizing.
+# Returns: "solo" | "duo" | "full"
+#
+# Heuristics:
+#   solo: files_changed <= 2 AND additions+deletions <= 100 AND no security-sensitive paths
+#   duo:  files_changed <= 5 AND additions+deletions <= 300 AND no cross-service indicators
+#   full: everything else, OR security/auth/migration keywords, OR 3+ top-level directories
+#
+# Usage: classify_complexity FILES_CHANGED ADDITIONS DELETIONS FILE_LIST [ISSUE_BODY]
+classify_complexity() {
+    local files_changed="${1:-0}"
+    local additions="${2:-0}"
+    local deletions="${3:-0}"
+    local file_list="${4:-}"
+    local issue_body="${5:-}"
+
+    # Validate numeric inputs defensively
+    [[ "$files_changed" =~ ^[0-9]+$ ]] || files_changed=0
+    [[ "$additions" =~ ^[0-9]+$ ]] || additions=0
+    [[ "$deletions" =~ ^[0-9]+$ ]] || deletions=0
+
+    local total_changes=$((additions + deletions))
+
+    # Check for security-sensitive directory paths in file list
+    local has_security=false
+    if [[ -n "$file_list" ]] && echo "$file_list" | grep -qiE '(^|/)(auth|middleware|security|crypto|session|token|password|oauth|secrets|credentials|creds|keys|ssl|tls|certs|permissions|rbac|acl|migrations?|migrate)/'; then
+        has_security=true
+    fi
+
+    # Check for security-sensitive file patterns (not just directories)
+    if [[ "$has_security" == "false" && -n "$file_list" ]]; then
+        if echo "$file_list" | grep -qiE '(\.env|\.key|\.pem|\.p12|\.cert|\.github/workflows/)'; then
+            has_security=true
+        fi
+    fi
+
+    # Check for keywords in issue/PR body that indicate full review
+    local has_keywords=false
+    if [[ -n "$issue_body" ]] && echo "$issue_body" | grep -qiE '\b(security|authenticat|authoriz|migration|breaking.change|vulnerability|CVE|exploit|injection|XSS|CSRF|SSRF|encryption|decrypt|privilege|escalation|credential|secret|api.key)'; then
+        has_keywords=true
+    fi
+
+    # Count unique top-level directories from file list
+    local top_dirs=0
+    if [[ -n "$file_list" ]]; then
+        top_dirs=$(echo "$file_list" | sed 's|/.*||' | sort -u | wc -l | tr -d ' ')
+    fi
+
+    # Full: security concerns, large scope, or cross-service changes
+    if $has_security || $has_keywords || [[ "$top_dirs" -ge 3 ]] || \
+       [[ "$files_changed" -gt 5 ]] || [[ "$total_changes" -gt 300 ]]; then
+        echo "full"
+        return 0
+    fi
+
+    # Unknown scope: all metrics are zero and no file list — floor at duo
+    # This prevents issues (where diff is unavailable) from bypassing security review
+    if [[ "$files_changed" -eq 0 ]] && [[ "$total_changes" -eq 0 ]] && [[ -z "$file_list" ]]; then
+        echo "duo"
+        return 0
+    fi
+
+    # Solo: small, contained changes
+    if [[ "$files_changed" -le 2 ]] && [[ "$total_changes" -le 100 ]]; then
+        echo "solo"
+        return 0
+    fi
+
+    # Duo: medium scope
+    echo "duo"
+    return 0
+}
+
+# Generate a task assessment with recommendations for team composition and model assignment.
+# The lead agent has full authority to adjust team size and per-agent models.
+# Usage: generate_task_assessment COMPLEXITY JOB_TYPE
+#   COMPLEXITY: "solo" | "duo" | "full"
+#   JOB_TYPE: "implement" | "review" | "rework"
+#
+# NOTE: The output contains {{PLACEHOLDER}} tokens (e.g. {{BUILDER_AGENT}},
+# {{SUBAGENT_MODEL}}). These are intentional — they will be resolved downstream
+# by substitute_prompt() PASS 2 when the full prompt is assembled.
+generate_task_assessment() {
+    local complexity="${1:-full}"
+    local job_type="${2:-implement}"
+
+    # --- Section A: Leadership Principles ---
+    cat <<'PRINCIPLES'
+## Decision Framework — Leadership Principles
+
+You are the engineering lead. Use these principles to guide every decision about team composition, model assignment, and quality trade-offs:
+
+1. **Customer obsession** — The end user's experience comes first. Code quality, reliability, and correctness are non-negotiable.
+2. **Deliver results** — Ship working code that meets acceptance criteria. Don't over-optimize process at the cost of delivery.
+3. **Earn trust** — Produce code that's safe, secure, and well-tested. When unsure, escalate to a human rather than guessing.
+4. **Insist on high standards** — Never cut corners on security, testing, or code quality. The complexity classification determines your minimum team — never go below it. Use specialist reviewers; self-review is not a substitute.
+5. **Deep dive** — Understand the problem before writing code. Read surrounding code, check for existing patterns, verify assumptions. Go beyond the diff — check callers in unmodified files, trace data flows end-to-end.
+6. **Invent and simplify** — Prefer the simplest correct solution. Don't over-engineer.
+7. **Bias for action** — Make team/model decisions quickly based on available signals. Don't wait for perfect information.
+8. **Quality over speed** — Spawn the team the complexity warrants. A missed security issue or incorrect implementation costs far more to fix after merge than spawning an extra reviewer costs upfront.
+
+PRINCIPLES
+
+    # --- Section B: Complexity Assessment ---
+    printf '## Complexity Assessment\n\n'
+    case "$complexity" in
+        solo) printf '**Classification: Solo** — Small, contained changes (≤2 files, ≤100 LOC, no security-sensitive paths).\n\n' ;;
+        duo)  printf '**Classification: Duo** — Moderate scope (≤5 files, ≤300 LOC) or unknown scope requiring at least a security check.\n\n' ;;
+        full) printf '**Classification: Full** — Large scope, security-sensitive, cross-service, or 3+ top-level directories.\n\n' ;;
+        *)    printf '**Classification: Full** (unknown complexity "%s" defaulted to full).\n\n' "$complexity" ;;
+    esac
+
+    # --- Section C: Recommended Team ---
+    printf '## Recommended Team\n\n'
+    case "$job_type" in
+        implement)
+            case "$complexity" in
+                solo) cat <<'REC_SOLO_IMPL'
+**Recommendation: Work solo.** Small scope — no team needed, but a rigorous security self-check is mandatory before creating the PR.
+- Lead implements, writes tests, commits, and creates PR.
+- Skip team creation and team shutdown steps in the workflow below.
+- **Mandatory pre-PR security checklist (do not skip):**
+  - [ ] No hardcoded secrets, API keys, tokens, or credentials
+  - [ ] No user-controlled input used in shell commands, SQL queries, or file paths without sanitization
+  - [ ] No sensitive data (PHI, PII, credentials) logged or included in error responses
+  - [ ] Auth checks are present wherever data is accessed or modified
+  - [ ] All callers of any modified function have been checked — including in unmodified files
+
+REC_SOLO_IMPL
+                    ;;
+                duo) cat <<'REC_DUO_IMPL'
+**Recommendation: Core team (3 agents).**
+- **builder** (`subagent_type: {{BUILDER_AGENT}}`): Implements code changes. Only teammate that writes code.
+- **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Reviews for hardcoded secrets, insecure storage, missing auth, OWASP vulnerabilities. Also checks all callers of modified functions in unmodified files.
+- **product-manager** (`subagent_type: {{PRODUCT_AGENT}}`): Validates the implementation meets the issue's acceptance criteria. Ensures nothing is over-engineered or under-scoped.
+
+REC_DUO_IMPL
+                    ;;
+                full|*) cat <<'REC_FULL_IMPL'
+**Recommendation: Full team (4 agents).**
+- **builder** (`subagent_type: {{BUILDER_AGENT}}`): Implements code changes. Only teammate that writes code.
+- **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Reviews for hardcoded secrets, insecure storage, missing auth, OWASP vulnerabilities.
+- **ux-reviewer** (`subagent_type: {{UX_AGENT}}`): Reviews UI/UX for usability, accessibility, friction. If no UI changes, focuses on API ergonomics.
+- **product-manager** (`subagent_type: {{PRODUCT_AGENT}}`): Validates implementation meets requirements. Ensures nothing is over-engineered or under-scoped.
+
+REC_FULL_IMPL
+                    ;;
+            esac
+            ;;
+        review)
+            case "$complexity" in
+                solo) cat <<'REC_SOLO_REVIEW'
+**Recommendation: Minimum review team (2 agents).** Even small PRs require a security reviewer — do not review alone.
+- **platform-engineer** (`subagent_type: {{BUILDER_AGENT}}`): Reviews code quality, correctness, and tests. Checks all callers of modified functions, including in unmodified files.
+- **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Reviews for hardcoded secrets, insecure storage, missing auth, OWASP vulnerabilities.
+
+REC_SOLO_REVIEW
+                    ;;
+                duo) cat <<'REC_DUO_REVIEW'
+**Recommendation: Small review team (2 agents).**
+- **platform-engineer** (`subagent_type: {{BUILDER_AGENT}}`): Reviews code quality, architecture, patterns, performance, correctness. Must read surrounding source files — not just the diff. Must check all callers of modified functions across the entire codebase, including unmodified files.
+- **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Reviews for hardcoded secrets, insecure storage, missing auth, OWASP vulnerabilities.
+
+REC_DUO_REVIEW
+                    ;;
+                full|*) cat <<'REC_FULL_REVIEW'
+**Recommendation: Full review team (3 agents). Platform-engineer is REQUIRED — do not go solo on full-complexity PRs.**
+- **platform-engineer** (`subagent_type: {{BUILDER_AGENT}}`): Reviews code quality, architecture, patterns, performance, correctness. Must read surrounding source files — not just the diff. Must check all callers of modified functions across the entire codebase, including unmodified files.
+- **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Reviews for hardcoded secrets, insecure storage, missing auth, OWASP vulnerabilities.
+- **ux-reviewer** (`subagent_type: {{UX_AGENT}}`): Reviews UI/UX changes for usability, accessibility, friction, consistency. Skip if no UI files in PR.
+
+REC_FULL_REVIEW
+                    ;;
+            esac
+            ;;
+        rework)
+            cat <<'REC_REWORK'
+**Recommendation: Always spawn at minimum builder + security-reviewer.**
+A security reviewer is required after every rework — fixes to blocking issues can introduce new vulnerabilities, and a re-check after pushing is mandatory.
+
+Read the review feedback, then decide on additional roles:
+- **Any blocking issues present** → Spawn **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`). Required — not optional.
+- **Security concerns mentioned** → Spawn **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`). Required.
+- **Scope/requirements questioned** → Also spawn **product-manager** (`subagent_type: {{PRODUCT_AGENT}}`).
+- **Mixed feedback** → Spawn both security-reviewer and product-manager.
+- **Style/formatting nits only (no blocking issues)** → Builder works solo, but must run the mandatory security self-check before pushing.
+
+Announce your classification before spawning: "Feedback classification: [blocking-issues|security-concern|scope-question|style-only]. Team: [+security|+security+product|solo-with-checklist]."
+
+REC_REWORK
+            ;;
+    esac
+
+    # --- Section D: Model Budget Guide ---
+    cat <<'MODEL_GUIDE'
+## Model Budget Guide
+
+| Agent Role | Default Model | When to Upgrade |
+|------------|---------------|-----------------|
+| builder | `model: "{{SUBAGENT_MODEL}}"` | Use opus for complex multi-file refactors |
+| security-reviewer | `model: "{{SUBAGENT_MODEL}}"` | Use opus for auth/crypto/injection-sensitive code |
+| ux-reviewer | `model: "{{SUBAGENT_MODEL}}"` | Rarely needs upgrade |
+| product-manager | `model: "{{SUBAGENT_MODEL}}"` | Rarely needs upgrade |
+
+Spawn each teammate using `model: "{{SUBAGENT_MODEL}}"` and `mode: "bypassPermissions"` in the Task tool call unless you have a specific reason to upgrade. The lead agent (you) already runs on the model specified by `CLAUDE_MODEL`.
+
+**CRITICAL**: You MUST pass `mode: "bypassPermissions"` on every Task tool call when spawning teammates. Without this, teammates will get stuck on "Waiting for team lead approval" for every Bash command and the entire job will stall.
+
+MODEL_GUIDE
+
+    # --- Section E: Available Roles ---
+    cat <<'ROLES'
+## Available Roles
+
+All agent personas available for team composition:
+- `{{BUILDER_AGENT}}` — Engineering/implementation (select based on repo type)
+- `{{SECURITY_AGENT}}` — Security review
+- `{{PRODUCT_AGENT}}` — Product management / requirements validation
+- `{{UX_AGENT}}` — UX/accessibility review
+
+ROLES
+
+    # --- Section F: Lead's Authority ---
+    cat <<'AUTHORITY'
+## Your Authority as Lead
+
+The complexity classification sets the **minimum** team — you may always add agents, never remove required ones. Your authority:
+- **Upgrade team size** — Always allowed. If you see auth code in a "solo" PR, spawn a security reviewer.
+- **Upgrade model assignments** — Upgrade subagents to opus for security-critical, auth-sensitive, or cryptographic code. The default is sonnet.
+- **Skip the UX reviewer only** — The UX reviewer may be skipped if there are genuinely no UI files in the PR (*.tsx, *.jsx, *.swift, *.kt, *.html, *.css, etc.). All other required roles must be spawned.
+- **Add agents** — If the task touches compliance-sensitive areas, add a compliance reviewer even if not recommended.
+
+Ground your decisions in the Leadership Principles above. If you lack sufficient information to make a confident decision, add a comment asking for human guidance rather than guessing.
+AUTHORITY
 }

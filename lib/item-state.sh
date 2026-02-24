@@ -8,11 +8,12 @@ ITEM_STATE_DIR="${AUTOMATION_DIR}/state/items"
 mkdir -p "$ITEM_STATE_DIR"
 
 # Create a new item state file
-# Usage: create_item_state "owner/repo" "issue" "123" "pending" ["project-slug"]
+# Usage: create_item_state "owner/repo" "issue" "123" "pending" ["project-slug"] ["parent-issue-number"]
 # Returns: path to state file
 create_item_state() {
     local repo="$1" type="$2" number="$3" initial_status="${4:-pending}"
     local project="${5:-${CURRENT_PROJECT:-default}}"
+    local parent_issue="${6:-}"
     local key="${project}--${repo//\//-}_${type}_${number}"
     local state_file="$ITEM_STATE_DIR/${key}.json"
 
@@ -29,6 +30,11 @@ create_item_state() {
     local now
     now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
+    local parent_json="null"
+    if [[ -n "$parent_issue" ]]; then
+        parent_json="$parent_issue"
+    fi
+
     cat > "$state_file" <<ITEMEOF
 {
   "project": "$project",
@@ -40,7 +46,8 @@ create_item_state() {
   "updated_at": "$now",
   "attempts": 0,
   "last_error": null,
-  "next_retry_after": null
+  "next_retry_after": null,
+  "parent_issue": $parent_json
 }
 ITEMEOF
 
@@ -185,6 +192,144 @@ should_process_item() {
     fi
 
     return 0  # Ready to process
+}
+
+# Reset a completed/abandoned item back to pending (for reopened issues/PRs)
+# Usage: reset_completed_item "owner/repo" "issue" "123" ["project-slug"]
+# Returns: 0 if state was reset, 1 if no-op
+reset_completed_item() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        return 1  # No state file — nothing to reset
+    fi
+
+    local status
+    status=$(jq -r '.status' "$state_file" 2>/dev/null || echo "unknown")
+
+    if [[ "$status" != "completed" && "$status" != "abandoned" ]]; then
+        return 1  # Only reset completed/abandoned items
+    fi
+
+    local now
+    now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+    local tmp_file="${state_file}.tmp"
+    jq --arg now "$now" '
+        .status = "pending" |
+        .updated_at = $now |
+        .attempts = 0 |
+        .last_error = null |
+        .next_retry_after = null
+    ' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+
+    log_info "Reset reopened item to pending: ${key}"
+    return 0
+}
+
+# Increment the rework cycle counter for a PR
+# Usage: increment_rework_cycles "owner/repo" "pr" "123" ["project-slug"]
+# Returns: the new cycle count
+increment_rework_cycles() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        echo "0"
+        return 1
+    fi
+
+    local current_cycles
+    current_cycles=$(jq -r '.rework_cycles // 0' "$state_file" 2>/dev/null)
+    local new_cycles=$((current_cycles + 1))
+
+    local tmp_file="${state_file}.tmp"
+    jq --argjson cycles "$new_cycles" '.rework_cycles = $cycles' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+
+    echo "$new_cycles"
+    return 0
+}
+
+# Get the current rework cycle count for a PR
+# Usage: get_rework_cycles "owner/repo" "pr" "123" ["project-slug"]
+# Returns: the current cycle count (0 if not set)
+get_rework_cycles() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        echo "0"
+        return 0
+    fi
+
+    jq -r '.rework_cycles // 0' "$state_file" 2>/dev/null
+}
+
+# Increment the CI fix attempt counter for a PR
+# Usage: increment_ci_fix_attempts "owner/repo" "test" "123" ["project-slug"]
+# Returns: the new attempt count
+# NOTE: This counter is separate from rework_cycles to prevent trivial lint fixes
+# from eating the rework budget.
+increment_ci_fix_attempts() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        echo "0"
+        return 1
+    fi
+
+    local current_attempts
+    current_attempts=$(jq -r '.ci_fix_attempts // 0' "$state_file" 2>/dev/null)
+    local new_attempts=$((current_attempts + 1))
+
+    local tmp_file="${state_file}.tmp"
+    jq --argjson attempts "$new_attempts" '.ci_fix_attempts = $attempts' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+
+    echo "$new_attempts"
+    return 0
+}
+
+# Get the current CI fix attempt count for a PR
+# Usage: get_ci_fix_attempts "owner/repo" "test" "123" ["project-slug"]
+# Returns: the current attempt count (0 if not set)
+get_ci_fix_attempts() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        echo "0"
+        return 0
+    fi
+
+    jq -r '.ci_fix_attempts // 0' "$state_file" 2>/dev/null
+}
+
+# Reset CI fix attempts (called when tests pass)
+# Usage: reset_ci_fix_attempts "owner/repo" "test" "123" ["project-slug"]
+reset_ci_fix_attempts() {
+    local repo="$1" type="$2" number="$3"
+    local project="${4:-${CURRENT_PROJECT:-default}}"
+    local key="${project}--${repo//\//-}_${type}_${number}"
+    local state_file="$ITEM_STATE_DIR/${key}.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        return 0
+    fi
+
+    local tmp_file="${state_file}.tmp"
+    jq '.ci_fix_attempts = 0' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
 }
 
 # List all items that are ready for retry

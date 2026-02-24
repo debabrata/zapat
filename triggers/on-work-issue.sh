@@ -35,7 +35,7 @@ gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
 SLOT_DIR="$SCRIPT_DIR/state/agent-work-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_WORK:-10}
 ITEM_STATE_FILE=$(create_item_state "$REPO" "work" "$ISSUE_NUMBER" "running" "$PROJECT_SLUG") || true
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "work" "$REPO" "$ISSUE_NUMBER"; then
     log_info "At capacity ($MAX_CONCURRENT concurrent sessions), skipping issue #${ISSUE_NUMBER}"
     [[ -n "$ITEM_STATE_FILE" && -f "$ITEM_STATE_FILE" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0
@@ -57,9 +57,11 @@ ISSUE_LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | join(", ")' 2>/dev
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -129,6 +131,22 @@ git worktree add "$WORKTREE_DIR" -b "$BRANCH_NAME" "origin/${BASE_BRANCH}" 2>/de
 
 log_info "Worktree created at $WORKTREE_DIR on branch $BRANCH_NAME"
 
+# --- Classify Complexity ---
+COMPLEXITY=$(classify_complexity 0 0 0 "" "$ISSUE_BODY")
+
+# Override: agent-full-review label forces full team
+if echo "$ISSUE_LABELS" | grep -qiw "agent-full-review"; then
+    COMPLEXITY="full"
+    log_info "Complexity overridden to 'full' by agent-full-review label"
+fi
+
+log_info "Complexity classification: $COMPLEXITY for issue #${ISSUE_NUMBER}"
+_log_structured "info" "Complexity classified" "\"complexity\":\"$COMPLEXITY\",\"job_type\":\"implement\",\"issue\":$ISSUE_NUMBER,\"repo\":\"$REPO\""
+
+TASK_ASSESSMENT=$(generate_task_assessment "$COMPLEXITY" "implement")
+# --- Copy slim CLAUDE.md into worktree ---
+cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$WORKTREE_DIR/CLAUDE.md"
+
 # --- Build Mention Context Block ---
 MENTION_BLOCK=""
 if [[ -n "$MENTION_CONTEXT" ]]; then
@@ -146,7 +164,10 @@ FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/implement-issue.txt" \
     "ISSUE_TITLE=$ISSUE_TITLE" \
     "ISSUE_BODY=$ISSUE_BODY" \
     "ISSUE_LABELS=$ISSUE_LABELS" \
-    "MENTION_CONTEXT=$MENTION_BLOCK")
+    "COMPLEXITY=$COMPLEXITY" \
+    "TASK_ASSESSMENT=$TASK_ASSESSMENT" \
+    "MENTION_CONTEXT=$MENTION_BLOCK" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file (avoids tmux send-keys escaping issues)
 PROMPT_FILE=$(mktemp)
@@ -188,9 +209,10 @@ PR_URL=$(gh pr list --repo "$REPO" --head "$BRANCH_NAME" --json url --jq '.[0].u
 if [[ -n "$PR_URL" ]]; then
     PR_NUM_CREATED=$(gh pr list --repo "$REPO" --head "$BRANCH_NAME" --json number --jq '.[0].number' 2>/dev/null || echo "")
     if [[ -n "$PR_NUM_CREATED" ]]; then
+        # Sequential flow: only add zapat-testing. Review will be triggered after tests pass (by on-test-pr.sh).
         gh pr edit "$PR_NUM_CREATED" --repo "$REPO" \
-            --add-label "zapat-testing" --add-label "zapat-review" 2>/dev/null || log_warn "Failed to add labels to PR #${PR_NUM_CREATED}"
-        log_info "Added zapat-testing and zapat-review labels to PR #${PR_NUM_CREATED} for automated testing and review"
+            --add-label "zapat-testing" 2>/dev/null || log_warn "Failed to add labels to PR #${PR_NUM_CREATED}"
+        log_info "Added zapat-testing label to PR #${PR_NUM_CREATED} (review will follow after tests pass)"
     fi
 fi
 

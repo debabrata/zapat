@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/item-state.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
+source "$SCRIPT_DIR/lib/ci-analysis.sh"
+source "$SCRIPT_DIR/lib/visual-helpers.sh"
 load_env
 
 # --- Args ---
@@ -27,15 +29,11 @@ set_project "$PROJECT_SLUG"
 
 log_info "Running tests for PR #${PR_NUMBER} in ${REPO} (project: $PROJECT_SLUG)"
 
-# --- Add status label ---
-gh pr edit "$PR_NUMBER" --repo "$REPO" \
-    --add-label "zapat-testing" 2>/dev/null || log_warn "Failed to add zapat-testing label to PR #${PR_NUMBER}"
-
 # --- Concurrency Slot (shares slots with agent-work) ---
 SLOT_DIR="$SCRIPT_DIR/state/agent-work-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_WORK:-10}
 ITEM_STATE_FILE=$(create_item_state "$REPO" "test" "$PR_NUMBER" "running" "$PROJECT_SLUG") || true
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "test" "$REPO" "$PR_NUMBER"; then
     log_info "At capacity ($MAX_CONCURRENT concurrent sessions), skipping test for PR #${PR_NUMBER}"
     [[ -n "${ITEM_STATE_FILE:-}" && -f "${ITEM_STATE_FILE:-}" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0
@@ -61,9 +59,11 @@ fi
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -110,12 +110,16 @@ git worktree add "$WORKTREE_DIR" "origin/${PR_BRANCH}" 2>/dev/null || {
 
 log_info "Worktree created at $WORKTREE_DIR on branch $PR_BRANCH"
 
+# --- Copy slim CLAUDE.md into worktree ---
+cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$WORKTREE_DIR/CLAUDE.md"
+
 # --- Build Prompt ---
 FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/test-pr.txt" \
     "REPO=$REPO" \
     "PR_NUMBER=$PR_NUMBER" \
     "PR_TITLE=$PR_TITLE" \
-    "PR_BRANCH=$PR_BRANCH")
+    "PR_BRANCH=$PR_BRANCH" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file
 PROMPT_FILE=$(mktemp)
@@ -129,7 +133,7 @@ else
 fi
 START_TIME=$(date +%s)
 
-launch_claude_session "$TMUX_WINDOW" "$WORKTREE_DIR" "$PROMPT_FILE"
+launch_claude_session "$TMUX_WINDOW" "$WORKTREE_DIR" "$PROMPT_FILE" "" "${CLAUDE_UTILITY_MODEL:-claude-haiku-4-5-20251001}"
 rm -f "$PROMPT_FILE"
 
 # --- Monitor with Timeout ---
@@ -149,9 +153,59 @@ DURATION=$((END_TIME - START_TIME))
 
 log_info "Test session ended for PR #${PR_NUMBER} (duration: ${DURATION}s)"
 
-# --- Remove zapat-testing label ---
-gh pr edit "$PR_NUMBER" --repo "$REPO" \
-    --remove-label "zapat-testing" 2>/dev/null || log_warn "Failed to remove zapat-testing label from PR #${PR_NUMBER}"
+# --- Determine test outcome from PR comments ---
+TEST_COMMENTS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+    --jq '.[].body' 2>/dev/null || echo "")
+TEST_PASSED=false
+if echo "$TEST_COMMENTS" | grep -qF "agent-test-passed"; then
+    TEST_PASSED=true
+fi
+
+# --- Update labels based on test outcome (sequential flow) ---
+if [[ "$TEST_PASSED" == "true" ]]; then
+    # Tests passed: reset CI fix counter
+    reset_ci_fix_attempts "$REPO" "test" "$PR_NUMBER" "$PROJECT_SLUG" 2>/dev/null || true
+
+    # Check if visual verification is applicable
+    if should_visual_verify "$REPO" "$PR_NUMBER" "$REPO_TYPE"; then
+        gh pr edit "$PR_NUMBER" --repo "$REPO" \
+            --remove-label "zapat-testing" \
+            --add-label "zapat-visual" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+        log_info "Tests passed for PR #${PR_NUMBER}, added zapat-visual label for visual verification"
+    else
+        gh pr edit "$PR_NUMBER" --repo "$REPO" \
+            --remove-label "zapat-testing" \
+            --add-label "zapat-review" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+        log_info "Tests passed for PR #${PR_NUMBER}, added zapat-review label"
+    fi
+else
+    # Tests failed: check if CI auto-fix can handle it
+    if [[ "${CI_AUTOFIX_ENABLED:-false}" == "true" ]]; then
+        FAILURE_TYPE=$(classify_ci_failure "$REPO" "$PR_NUMBER")
+        CI_FIX_ATTEMPTS=$(get_ci_fix_attempts "$REPO" "test" "$PR_NUMBER" "$PROJECT_SLUG")
+        MAX_CI_FIX=${MAX_CI_FIX_ATTEMPTS:-2}
+
+        if [[ "$FAILURE_TYPE" == "trivial" && "$CI_FIX_ATTEMPTS" -lt "$MAX_CI_FIX" ]]; then
+            # Trivial failure within attempt limit: dispatch lightweight CI fix
+            gh pr edit "$PR_NUMBER" --repo "$REPO" \
+                --remove-label "zapat-testing" \
+                --add-label "zapat-ci-fix" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+            log_info "Trivial CI failure on PR #${PR_NUMBER}, dispatching auto-fix (attempt $((CI_FIX_ATTEMPTS + 1))/${MAX_CI_FIX})"
+        else
+            # Substantive failure or CI fix attempts exhausted: full rework
+            gh pr edit "$PR_NUMBER" --repo "$REPO" \
+                --remove-label "zapat-testing" \
+                --add-label "zapat-rework" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+            log_info "Tests failed for PR #${PR_NUMBER} (${FAILURE_TYPE}), added zapat-rework label for fixes"
+        fi
+    else
+        # CI auto-fix disabled: send back to rework
+        gh pr edit "$PR_NUMBER" --repo "$REPO" \
+            --remove-label "zapat-testing" \
+            --add-label "zapat-rework" 2>/dev/null || log_warn "Failed to update labels on PR #${PR_NUMBER}"
+        log_info "Tests failed for PR #${PR_NUMBER}, added zapat-rework label for fixes"
+    fi
+fi
 
 # --- Record Metrics ---
 if command -v node &>/dev/null && [[ -f "$SCRIPT_DIR/bin/zapat" ]]; then

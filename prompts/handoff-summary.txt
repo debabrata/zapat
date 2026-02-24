@@ -1,0 +1,27 @@
+<!-- zapat-handoff: {{REASON}} -->
+## Pipeline Handoff: {{REASON_TITLE}}
+
+**PR:** #{{PR_NUMBER}} — {{PR_TITLE}}
+**Branch:** `{{PR_BRANCH}}`
+**Changes:** {{FILES_CHANGED}} files, +{{ADDITIONS}}/-{{DELETIONS}}
+{{REWORK_CYCLES}}
+{{REVIEWS_SUMMARY}}
+
+### Why This Needs Human Attention
+
+{{REASON_DETAIL}}
+
+{{EXTRA_CONTEXT}}
+
+### Suggested Next Steps
+
+{{SUGGESTED_ACTIONS}}
+
+{{DEEP_LINK_SECTION}}
+
+### Unresolved Review Comments
+
+{{UNRESOLVED_COMMENTS}}
+
+---
+_Escalated by [Zapat](https://github.com/zapat-ai/zapat) | Reason: `{{REASON}}`_

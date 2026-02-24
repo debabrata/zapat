@@ -6,9 +6,14 @@
 TMUX_SESSION="${TMUX_SESSION:-zapat}"
 
 # Patterns for detecting stuck panes
+# Permission pattern uses exact Claude CLI prompt phrases to avoid false positives
+# from code review output (IAM policies, etc.).
+# Note: PANE_PATTERN_BYPASS removed — defaultMode:bypassPermissions in settings.json
+# means no startup bypass prompt appears. "shift+tab to cycle" now appears in every
+# running session's status bar and must NOT be used as a match pattern.
 PANE_PATTERN_ACCOUNT_LIMIT="(out of extra usage|resets [0-9]|usage limit|plan limit|You've reached)"
 PANE_PATTERN_RATE_LIMIT="(Switch to extra|Rate limit|rate_limit|429|Too Many Requests|Retry after)"
-PANE_PATTERN_PERMISSION="(Allow once|Allow always|Do you want to allow|wants to use the .* tool|approve this action)"
+PANE_PATTERN_PERMISSION="(Allow once|Allow always|Do you want to allow|Do you want to (create|make|run|write|edit)|wants to use the .* tool|approve this action|Waiting for team lead approval)"
 PANE_PATTERN_FATAL="(FATAL|OOM|out of memory|Segmentation fault|core dumped|panic:|SIGKILL)"
 
 # Wait for specific content to appear in a tmux pane
@@ -36,13 +41,14 @@ wait_for_tmux_content() {
 }
 
 # Launch a Claude session in a tmux window with readiness detection
-# Usage: launch_claude_session "window-name" "/path/to/workdir" "/path/to/prompt-file" [extra_env_vars]
+# Usage: launch_claude_session "window-name" "/path/to/workdir" "/path/to/prompt-file" [extra_env_vars] [agent_model]
 # Returns: 0 if session launched and prompt submitted, 1 on failure
 launch_claude_session() {
     local window="$1"
     local workdir="$2"
     local prompt_file="$3"
     local extra_env="${4:-}"
+    local model="${5:-${CLAUDE_MODEL:-claude-opus-4-6}}"
 
     # Validate inputs
     if [[ ! -d "$workdir" ]]; then
@@ -65,8 +71,9 @@ launch_claude_session() {
     if [[ -n "$extra_env" ]]; then
         cmd+="$extra_env "
     fi
-    cmd+="claude --model ${CLAUDE_MODEL:-claude-opus-4-6} "
-    cmd+="--dangerously-skip-permissions; "
+    cmd+="claude --model '${model}' "
+    cmd+="--dangerously-skip-permissions "
+    cmd+="--permission-mode bypassPermissions; "
     cmd+="exit"
 
     # Create new tmux window
@@ -170,7 +177,9 @@ check_pane_health() {
                 "\"type\":\"pane_health\",\"issue\":\"account_rate_limit\",\"pane\":\"${pane_id}\",\"job\":\"${job_name}\""
 
             # Signal monitor_session to tear down this session
-            echo "rate_limited" > "/tmp/zapat-pane-signal-${window}"
+            local signal_file="${AUTOMATION_DIR:-$SCRIPT_DIR}/state/pane-signals/signal-${window}"
+            mkdir -p "$(dirname "$signal_file")"
+            echo "rate_limited" > "$signal_file"
 
             if _pane_health_should_notify "$pane_id" "account_rate_limit"; then
                 "${AUTOMATION_DIR:-$SCRIPT_DIR}/bin/notify.sh" \
@@ -198,6 +207,10 @@ check_pane_health() {
         fi
 
         # Priority 2: Permission prompt
+        # Note: "Waiting for team lead approval" prompts CANNOT be auto-resolved by
+        # pressing Enter — they require the lead agent to send an approval message.
+        # Detection here is for monitoring/alerting only (Slack notifications).
+        # Fix: ensure leads pass `mode: "bypassPermissions"` when spawning teammates.
         if echo "$content" | grep -qE "$PANE_PATTERN_PERMISSION"; then
             _log_structured "warn" "Permission prompt detected in pane ${pane_id}" \
                 "\"type\":\"pane_health\",\"issue\":\"permission\",\"pane\":\"${pane_id}\",\"job\":\"${job_name}\""
@@ -262,7 +275,8 @@ monitor_session() {
     local timeout="$2"
     local interval="${3:-15}"
     local job_name="${4:-monitor}"
-    local signal_file="/tmp/zapat-pane-signal-${window}"
+    local signal_file="${AUTOMATION_DIR:-$SCRIPT_DIR}/state/pane-signals/signal-${window}"
+    mkdir -p "$(dirname "$signal_file")"
     local start
     start=$(date +%s)
 
@@ -276,6 +290,11 @@ monitor_session() {
     fi
 
     log_info "Monitoring session '$window' (timeout: ${timeout}s)"
+
+    # Idle detection: count consecutive checks where Claude is at the ❯ prompt
+    # with no active spinner. After 2 consecutive idle checks, kill the window.
+    local idle_checks=0
+    local idle_threshold=2
 
     while true; do
         # Detect if the entire tmux session was lost
@@ -319,6 +338,29 @@ monitor_session() {
             fi
             rm -f "$signal_file"
             return 2
+        fi
+
+        # Idle detection: Claude finished and is sitting at the ❯ prompt.
+        # The idle pattern is: cost line (✻) followed by separator (───) and
+        # the input prompt (❯), with no active spinner visible.
+        # IMPORTANT: We also require the cost line (✻) to be present, which
+        # proves Claude actually processed a prompt. Without it, the session
+        # is still in its initial startup state and hasn't done any work yet.
+        local tail_content
+        tail_content=$(tmux capture-pane -t "${TMUX_SESSION}:${window}" -p -S -5 2>/dev/null || echo "")
+        if echo "$tail_content" | grep -qE "^❯" && echo "$tail_content" | grep -qE "✻" && ! echo "$tail_content" | grep -qE "(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Working|Thinking)"; then
+            idle_checks=$((idle_checks + 1))
+            if [[ $idle_checks -ge $idle_threshold ]]; then
+                log_info "Session '$window' idle at prompt for $idle_checks checks — killing window"
+                # Kill directly — /exit via send-keys is unreliable (races with
+                # the command picker menu). The session is idle, nothing to save.
+                tmux kill-window -t "${TMUX_SESSION}:${window}" 2>/dev/null || true
+                rm -f "$signal_file"
+                log_info "Session '$window' terminated after idle detection"
+                return 0
+            fi
+        else
+            idle_checks=0
         fi
 
         sleep "$interval"

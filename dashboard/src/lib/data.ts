@@ -6,18 +6,33 @@ import type {
   MetricEntry,
   HealthCheck,
   SystemStatus,
+  SlotInfo,
   ChartDataPoint,
+  GitHubEvent,
 } from './types'
 
 function getAutomationDir(): string {
   return process.env.AUTOMATION_DIR || join(process.cwd(), '..')
 }
 
+// --- Simple TTL cache (module-level, survives across requests in same process) ---
+const TTL_MS = parseInt(process.env.DASHBOARD_CACHE_TTL_MS ?? '30000', 10)
+const _cache = new Map<string, { value: string | null; expires: number }>()
+
+function cachedExec(cmd: string, ttl = TTL_MS): string | null {
+  const now = Date.now()
+  const hit = _cache.get(cmd)
+  if (hit && hit.expires > now) return hit.value
+  const value = exec(cmd)
+  _cache.set(cmd, { value, expires: now + ttl })
+  return value
+}
+
 function exec(cmd: string): string | null {
   try {
     return execSync(cmd, {
       encoding: 'utf-8',
-      timeout: 30000,
+      timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim()
   } catch {
@@ -29,7 +44,7 @@ function execFull(cmd: string): { stdout: string; stderr: string; exitCode: numb
   try {
     const stdout = execSync(cmd, {
       encoding: 'utf-8',
-      timeout: 30000,
+      timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim()
     return { stdout, stderr: '', exitCode: 0 }
@@ -133,7 +148,7 @@ export function getActiveItems(project?: string): PipelineItem[] {
   const items: PipelineItem[] = []
 
   for (const { repo } of repos) {
-    const prJson = exec(
+    const prJson = cachedExec(
       `gh pr list --repo "${repo}" --json number,title,labels,state,url,createdAt --state open --limit 50`,
     )
     if (prJson) {
@@ -164,7 +179,7 @@ export function getActiveItems(project?: string): PipelineItem[] {
       }
     }
 
-    const issueJson = exec(
+    const issueJson = cachedExec(
       `gh issue list --repo "${repo}" --json number,title,labels,state,url,createdAt --state open --limit 50`,
     )
     if (issueJson) {
@@ -204,7 +219,7 @@ export function getCompletedItems(project?: string): PipelineItem[] {
   const items: PipelineItem[] = []
 
   for (const { repo } of repos) {
-    const prJson = exec(
+    const prJson = cachedExec(
       `gh pr list --repo "${repo}" --json number,title,labels,url,mergedAt,headRefName --state merged --limit 20`,
     )
     if (prJson) {
@@ -228,7 +243,7 @@ export function getCompletedItems(project?: string): PipelineItem[] {
       }
     }
 
-    const issueJson = exec(
+    const issueJson = cachedExec(
       `gh issue list --repo "${repo}" --json number,title,labels,url,closedAt --state closed --limit 20`,
     )
     if (issueJson) {
@@ -312,7 +327,10 @@ export function getHealthChecks(_project?: string): HealthCheck[] {
     let staleCount = 0
     for (const f of files) {
       try {
-        const pid = readFileSync(join(slotDir, f), 'utf-8').trim()
+        const content = readFileSync(join(slotDir, f), 'utf-8').trim()
+        const pid = content.startsWith('{')
+          ? String(JSON.parse(content).pid)
+          : content
         if (pid) {
           const check = execFull(`kill -0 ${pid}`)
           if (check.exitCode !== 0) staleCount++
@@ -340,8 +358,10 @@ export function getHealthChecks(_project?: string): HealthCheck[] {
     checks.push({ name: 'stale-slots', status: 'ok', message: 'No slot directory' })
   }
 
-  // Check gh auth
-  const ghCheck = execFull('gh auth status')
+  // Check gh auth (cache 5 min — rarely changes)
+  const ghAuthCached = cachedExec('gh auth status 2>&1; echo $?', 300000)
+  const ghAuthOk = ghAuthCached !== null && !ghAuthCached.includes('not logged')
+  const ghCheck = { exitCode: ghAuthOk ? 0 : 1 }
   if (ghCheck.exitCode === 0) {
     checks.push({ name: 'gh-auth', status: 'ok', message: 'GitHub CLI authenticated' })
   } else {
@@ -372,22 +392,23 @@ export function getHealthChecks(_project?: string): HealthCheck[] {
     checks.push({ name: 'failed-items', status: 'ok', message: 'No items directory' })
   }
 
-  // Check stuck panes
+  // Check stuck panes (tmux calls use 5s TTL — need to be reasonably fresh)
+  const TMUX_TTL = 5000
   const tmuxSessionExists = checks.some(c => c.name === 'tmux-session' && c.status === 'ok')
   if (tmuxSessionExists) {
-    const windowsOutput = exec('tmux list-windows -t zapat -F "#{window_name}" 2>/dev/null')
+    const windowsOutput = cachedExec('tmux list-windows -t zapat -F "#{window_name}" 2>/dev/null', TMUX_TTL)
     if (windowsOutput) {
       const windows = windowsOutput.split('\n').filter(Boolean)
       let stuckPanes: string[] = []
       const ratePattern = /Switch to extra|Rate limit|rate_limit|429|Too Many Requests|Retry after/
-      const permPattern = /Allow|Deny|permission|Do you want to|approve this/
+      const permPattern = /Allow once|Allow always|Do you want to (create|make|proceed|run|write|edit|allow)/
       const fatalPattern = /FATAL|OOM|out of memory|Segmentation fault|core dumped|panic:|SIGKILL/
 
       for (const win of windows) {
-        const panesOutput = exec(`tmux list-panes -t "zapat:${win}" -F "#{pane_index}" 2>/dev/null`)
+        const panesOutput = cachedExec(`tmux list-panes -t "zapat:${win}" -F "#{pane_index}" 2>/dev/null`, TMUX_TTL)
         if (!panesOutput) continue
         for (const paneIdx of panesOutput.split('\n').filter(Boolean)) {
-          const content = exec(`tmux capture-pane -t "zapat:${win}.${paneIdx}" -p 2>/dev/null`)
+          const content = cachedExec(`tmux capture-pane -t "zapat:${win}.${paneIdx}" -p 2>/dev/null`, TMUX_TTL)
           if (!content) continue
           if (ratePattern.test(content)) {
             stuckPanes.push(`${win}.${paneIdx}: rate limit`)
@@ -401,7 +422,7 @@ export function getHealthChecks(_project?: string): HealthCheck[] {
 
       if (stuckPanes.length === 0) {
         const totalPanes = windows.reduce((sum, win) => {
-          const p = exec(`tmux list-panes -t "zapat:${win}" -F "#{pane_index}" 2>/dev/null`)
+          const p = cachedExec(`tmux list-panes -t "zapat:${win}" -F "#{pane_index}" 2>/dev/null`, TMUX_TTL)
           return sum + (p ? p.split('\n').filter(Boolean).length : 0)
         }, 0)
         checks.push({
@@ -476,14 +497,35 @@ export function getSystemStatus(project?: string): SystemStatus {
   const sessionCheck = execFull('tmux has-session -t zapat')
   const sessionExists = sessionCheck.exitCode === 0
 
-  const windowCountStr = exec('tmux list-windows -t zapat 2>/dev/null | wc -l')
+  const windowCountStr = cachedExec('tmux list-windows -t zapat 2>/dev/null | wc -l', 5000)
   const windowCount = windowCountStr ? parseInt(windowCountStr.trim()) : 0
 
   const slotDir = join(automationDir, 'state', 'agent-work-slots')
   let activeSlots = 0
+  const slots: SlotInfo[] = []
   if (existsSync(slotDir)) {
     try {
-      activeSlots = readdirSync(slotDir).filter((f) => f.endsWith('.pid')).length
+      const files = readdirSync(slotDir).filter((f) => f.endsWith('.pid'))
+      activeSlots = files.length
+      for (const f of files) {
+        try {
+          const content = readFileSync(join(slotDir, f), 'utf-8').trim()
+          if (content.startsWith('{')) {
+            slots.push(JSON.parse(content) as SlotInfo)
+          } else {
+            // Legacy plain-PID slot file — minimal info
+            slots.push({
+              pid: parseInt(content, 10),
+              job_type: 'unknown',
+              repo: '',
+              number: '',
+              started_at: '',
+            })
+          }
+        } catch {
+          /* skip unreadable slot */
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -495,8 +537,160 @@ export function getSystemStatus(project?: string): SystemStatus {
     windowCount,
     activeSlots,
     maxSlots: 10,
+    slots,
     checks,
   }
+}
+
+export function getGitHubActivity(days: number = 7, project?: string): GitHubEvent[] {
+  const repos = getRepos(project)
+  const events: GitHubEvent[] = []
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+
+  for (const { repo } of repos) {
+    // 1. PRs created by Zapat (agent/ branch prefix)
+    const prJson = cachedExec(
+      `gh pr list --repo "${repo}" --json number,title,url,createdAt,mergedAt,state,headRefName --state all --limit 30`,
+      60000,
+    )
+    if (prJson) {
+      try {
+        for (const pr of JSON.parse(prJson)) {
+          if (!pr.headRefName?.startsWith('agent/')) continue
+          if (pr.createdAt >= since) {
+            events.push({
+              id: `${repo}-pr-created-${pr.number}`,
+              type: 'pr_created',
+              repo,
+              number: pr.number,
+              title: pr.title,
+              url: pr.url,
+              timestamp: pr.createdAt,
+            })
+          }
+          if (pr.state === 'MERGED' && pr.mergedAt >= since) {
+            events.push({
+              id: `${repo}-pr-merged-${pr.number}`,
+              type: 'pr_merged',
+              repo,
+              number: pr.number,
+              title: pr.title,
+              url: pr.url,
+              timestamp: pr.mergedAt,
+            })
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    // 2. PR review comments posted by Zapat
+    const reviewedPrsJson = cachedExec(
+      `gh pr list --repo "${repo}" --json number,title,url,comments --state all --limit 30`,
+      60000,
+    )
+    if (reviewedPrsJson) {
+      try {
+        for (const pr of JSON.parse(reviewedPrsJson)) {
+          for (const comment of (pr.comments || [])) {
+            if (!comment.createdAt || comment.createdAt < since) continue
+            const body: string = comment.body || ''
+            if (body.startsWith('## PR Review') || body.startsWith('## Agent Review Complete')) {
+              // Extract first non-empty line after the heading as summary
+              const lines = body.split('\n').map((l: string) => l.trim()).filter(Boolean)
+              const summary = lines.find((l: string) =>
+                !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('**') && l.length > 5
+              )
+              events.push({
+                id: `${repo}-pr-reviewed-${pr.number}-${comment.createdAt}`,
+                type: 'pr_reviewed',
+                repo,
+                number: pr.number,
+                title: pr.title,
+                url: pr.url,
+                timestamp: comment.createdAt,
+                summary: summary?.slice(0, 120),
+              })
+              break // one review event per PR
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    // 3. Issue comments posted by Zapat (triage / research)
+    const issueJson = cachedExec(
+      `gh issue list --repo "${repo}" --json number,title,url,comments --state all --limit 30`,
+      60000,
+    )
+    if (issueJson) {
+      try {
+        for (const issue of JSON.parse(issueJson)) {
+          for (const comment of (issue.comments || [])) {
+            if (!comment.createdAt || comment.createdAt < since) continue
+            const body: string = comment.body || ''
+            if (
+              body.startsWith('## Triage') ||
+              body.startsWith('## Research') ||
+              body.startsWith('## Agent') ||
+              body.includes('<!-- zapat:')
+            ) {
+              const lines = body.split('\n').map((l: string) => l.trim()).filter(Boolean)
+              const summary = lines.find((l: string) =>
+                !l.startsWith('#') && !l.startsWith('<!--') && !l.startsWith('**') && l.length > 5
+              )
+              const isResearch = body.startsWith('## Research')
+              events.push({
+                id: `${repo}-issue-${isResearch ? 'researched' : 'triaged'}-${issue.number}-${comment.createdAt}`,
+                type: isResearch ? 'issue_researched' : 'issue_triaged',
+                repo,
+                number: issue.number,
+                title: issue.title,
+                url: issue.url,
+                timestamp: comment.createdAt,
+                summary: summary?.slice(0, 120),
+              })
+              break
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    // 4. Closed issues that had agent labels
+    const closedIssueJson = cachedExec(
+      `gh issue list --repo "${repo}" --json number,title,url,closedAt,labels --state closed --limit 20`,
+      60000,
+    )
+    if (closedIssueJson) {
+      try {
+        for (const issue of JSON.parse(closedIssueJson)) {
+          if (!issue.closedAt || issue.closedAt < since) continue
+          const labelNames = (issue.labels || []).map((l: any) => l.name)
+          if (labelNames.some((l: string) => ['agent-work', 'agent-research', 'agent'].includes(l))) {
+            events.push({
+              id: `${repo}-issue-closed-${issue.number}`,
+              type: 'issue_closed',
+              repo,
+              number: issue.number,
+              title: issue.title,
+              url: issue.url,
+              timestamp: issue.closedAt,
+            })
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  // Deduplicate by id, sort newest first
+  const seen = new Set<string>()
+  const deduped = events.filter(e => {
+    if (seen.has(e.id)) return false
+    seen.add(e.id)
+    return true
+  })
+  deduped.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+  return deduped.slice(0, 50)
 }
 
 export function getProjectList(): Array<{ slug: string; name: string }> {

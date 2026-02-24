@@ -1,21 +1,27 @@
 'use client'
 
-import { Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { Suspense, useEffect } from 'react'
 import { StatCard } from '@/components/StatCard'
 import { StatsGrid } from '@/components/StatsGrid'
 import { KanbanBoard } from '@/components/KanbanBoard'
 import { SuccessChart } from '@/components/SuccessChart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { usePolling } from '@/hooks/usePolling'
+import { useProject } from '@/hooks/useProject'
 import { pipelineConfig } from '../../pipeline.config'
-import type { PipelineItem, ChartDataPoint, SystemStatus } from '@/lib/types'
+import type { PipelineItem, ChartDataPoint, SystemStatus, SlotInfo } from '@/lib/types'
 
 function OverviewContent() {
-  const searchParams = useSearchParams()
-  const project = searchParams.get('project')
+  const { project, projectName } = useProject()
   const projectParam = project ? `&project=${encodeURIComponent(project)}` : ''
   const projectQuery = project ? `?project=${encodeURIComponent(project)}` : ''
+
+  // Dynamic page title based on project context
+  useEffect(() => {
+    document.title = project
+      ? `${projectName} - Pipeline Dashboard`
+      : 'Zapat - Pipeline Dashboard'
+  }, [project, projectName])
 
   const { data: itemsData, isLoading: itemsLoading } = usePolling<{ items: PipelineItem[] }>({
     url: `/api/items${projectQuery}`,
@@ -82,6 +88,7 @@ function OverviewContent() {
           subtitle="active agent slots"
           loading={healthLoading}
         />
+
         <StatCard
           label="Jobs (24h)"
           value={recentMetrics.length}
@@ -101,6 +108,74 @@ function OverviewContent() {
           loading={completedLoading}
         />
       </StatsGrid>
+
+      {(healthData?.slots?.length ?? 0) > 0 && (
+        <Card className="border-0 bg-zinc-50 shadow-none dark:bg-zinc-800/50">
+          <CardHeader>
+            <CardTitle className="text-base">Active Slots</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+                    <th className="pb-2 pr-4 font-medium">Job</th>
+                    <th className="pb-2 pr-4 font-medium">Repo</th>
+                    <th className="pb-2 pr-4 font-medium">#</th>
+                    <th className="pb-2 pr-4 font-medium">Started</th>
+                    <th className="pb-2 font-medium">PID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {healthData!.slots.map((slot: SlotInfo) => {
+                    const repoShort = slot.repo ? slot.repo.split('/').pop() : '—'
+                    const repoUrl = slot.repo ? `https://github.com/${slot.repo}` : null
+                    const isPr = ['review', 'rework', 'test'].includes(slot.job_type)
+                    const numberUrl = slot.repo && slot.number
+                      ? `https://github.com/${slot.repo}/${isPr ? 'pull' : 'issues'}/${slot.number}`
+                      : null
+                    const elapsed = slot.started_at
+                      ? Math.floor((Date.now() - new Date(slot.started_at).getTime()) / 60000)
+                      : null
+                    return (
+                      <tr
+                        key={slot.pid}
+                        className="border-b last:border-0 dark:border-zinc-700"
+                      >
+                        <td className="py-2 pr-4">
+                          <span className="rounded bg-zinc-200 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-700">
+                            {slot.job_type}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-4">
+                          {repoUrl ? (
+                            <a href={repoUrl} target="_blank" rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline dark:text-blue-400">
+                              {repoShort}
+                            </a>
+                          ) : <span className="text-zinc-700 dark:text-zinc-300">{repoShort}</span>}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {numberUrl ? (
+                            <a href={numberUrl} target="_blank" rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline dark:text-blue-400">
+                              #{slot.number}
+                            </a>
+                          ) : <span className="text-zinc-700 dark:text-zinc-300">—</span>}
+                        </td>
+                        <td className="py-2 pr-4 text-zinc-500 dark:text-zinc-400">
+                          {elapsed !== null ? `${elapsed}m ago` : '—'}
+                        </td>
+                        <td className="py-2 font-mono text-xs text-zinc-400">{slot.pid}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-0 bg-zinc-50 shadow-none dark:bg-zinc-800/50">
         <CardHeader>

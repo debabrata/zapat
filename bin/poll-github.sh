@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/item-state.sh"
+source "$SCRIPT_DIR/lib/handoff.sh"
 load_env
 
 # --- Lock ---
@@ -107,11 +108,48 @@ PROCESSED_WORK="$STATE_DIR/processed-work.txt"
 PROCESSED_REWORK="$STATE_DIR/processed-rework.txt"
 PROCESSED_WRITE_TESTS="$STATE_DIR/processed-write-tests.txt"
 PROCESSED_RESEARCH="$STATE_DIR/processed-research.txt"
+PROCESSED_TESTING="$STATE_DIR/processed-testing.txt"
 PROCESSED_MENTIONS="$STATE_DIR/processed-mentions.txt"
 PROCESSED_AUTO_TRIAGE="$STATE_DIR/processed-auto-triage.txt"
+PROCESSED_AUTO_REWORK="$STATE_DIR/processed-auto-rework.txt"
 PROCESSED_REBASE="$STATE_DIR/processed-rebase.txt"
 LAST_MENTION_POLL="$STATE_DIR/last-mention-poll.txt"
-touch "$PROCESSED_PRS" "$PROCESSED_ISSUES" "$PROCESSED_WORK" "$PROCESSED_REWORK" "$PROCESSED_WRITE_TESTS" "$PROCESSED_RESEARCH" "$PROCESSED_MENTIONS" "$PROCESSED_AUTO_TRIAGE" "$PROCESSED_REBASE"
+touch "$PROCESSED_PRS" "$PROCESSED_ISSUES" "$PROCESSED_WORK" "$PROCESSED_REWORK" "$PROCESSED_WRITE_TESTS" "$PROCESSED_RESEARCH" "$PROCESSED_TESTING" "$PROCESSED_MENTIONS" "$PROCESSED_AUTO_TRIAGE" "$PROCESSED_AUTO_REWORK" "$PROCESSED_REBASE"
+
+# --- Reopened Item Helpers ---
+# Remove an exact key from a processed file (whole-line match to avoid substring hits)
+# Usage: remove_from_processed_file "file" "key"
+remove_from_processed_file() {
+    local file="$1" key="$2"
+    [[ -f "$file" ]] || return 0
+    local tmp="${file}.tmp"
+    grep -vxF "$key" "$file" > "$tmp" 2>/dev/null || true
+    mv "$tmp" "$file"
+}
+
+# Check if an open item was reopened (completed state but still open on GitHub).
+# If so, reset its state and remove it from the processed file so it gets re-processed.
+# Returns 0 if item was reopened (caller should continue processing), 1 otherwise (caller should skip).
+check_reopened_item() {
+    local processed_file="$1" key="$2" repo="$3" type="$4" num="$5" project="$6"
+    if reset_completed_item "$repo" "$type" "$num" "$project"; then
+        remove_from_processed_file "$processed_file" "$key"
+        log_info "Reopened item detected: $key — re-processing"
+        return 0
+    fi
+    return 1
+}
+
+# --- Defense-in-depth: detect unseeded state files ---
+# If processed-issues.txt AND processed-prs.txt are both empty, startup.sh
+# hasn't seeded yet. Polling now would treat every open item as new (issue #4).
+if [[ ! -s "$PROCESSED_ISSUES" && ! -s "$PROCESSED_PRS" ]]; then
+    log_warn "State files are empty — startup.sh may not have seeded yet. Skipping poll cycle to prevent flood."
+    log_warn "Run: bin/startup.sh (or bin/startup.sh --seed-state) to initialize state."
+    _log_structured "warn" "Poll skipped: empty state files (unseeded)" \
+        "\"type\":\"flood_prevention\",\"reason\":\"empty_state_files\""
+    exit 0
+fi
 
 # --- Governance Check ---
 # Returns 0 if item should be processed, 1 if it should be skipped
@@ -238,7 +276,7 @@ scan_mentions() {
 
         # Determine if this is a PR or issue
         local is_pr=false
-        if gh pr view "$item_number" --repo "$repo" --json number &>/dev/null; then
+        if gh pr view "$item_number" --repo "$repo" --json number,labels &>/dev/null; then
             is_pr=true
         fi
 
@@ -247,6 +285,7 @@ scan_mentions() {
         # Route to appropriate trigger (pass project_slug from outer loop via CURRENT_PROJECT)
         # Check dispatch cap (DISPATCH_COUNT/MAX_DISPATCH are global, set in main loop)
         # Do NOT mark as processed here — mention will be retried next cycle
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         if [[ ${DISPATCH_COUNT:-0} -ge ${MAX_DISPATCH:-20} ]]; then
             log_warn "Per-cycle dispatch limit reached — deferring mention on #${item_number}"
             continue
@@ -254,15 +293,29 @@ scan_mentions() {
 
         local cur_project="${CURRENT_PROJECT:-default}"
         if [[ "$is_pr" == "true" ]]; then
-            "$SCRIPT_DIR/triggers/on-new-pr.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
+            local pr_labels
+            pr_labels=$(gh pr view "$item_number" --repo "$repo" --json labels \
+                --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+
+            if echo "$pr_labels" | grep -q "zapat-rework"; then
+                "$SCRIPT_DIR/triggers/on-rework-pr.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
+            elif echo "$pr_labels" | grep -q "zapat-testing"; then
+                "$SCRIPT_DIR/triggers/on-test-pr.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
+            else
+                "$SCRIPT_DIR/triggers/on-new-pr.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
+            fi
             TOTAL_PRS=$((TOTAL_PRS + 1))
         else
-            # Check if issue has agent-work label
+            # Check issue labels for routing — specialized labels before generic
             local issue_labels
             issue_labels=$(gh issue view "$item_number" --repo "$repo" --json labels \
                 --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
 
-            if echo "$issue_labels" | grep -q "agent-work"; then
+            if echo "$issue_labels" | grep -q "agent-research"; then
+                "$SCRIPT_DIR/triggers/on-research-issue.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
+            elif echo "$issue_labels" | grep -q "agent-write-tests"; then
+                "$SCRIPT_DIR/triggers/on-write-tests.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
+            elif echo "$issue_labels" | grep -q "agent-work"; then
                 "$SCRIPT_DIR/triggers/on-work-issue.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
             else
                 "$SCRIPT_DIR/triggers/on-new-issue.sh" "$repo" "$item_number" "$mention_text" "$cur_project" &
@@ -275,11 +328,49 @@ scan_mentions() {
     done
 }
 
+# --- Program Status Auto-Post ---
+# After significant events on sub-issues/PRs, post updated program status to parent.
+# Throttled: max 1 update per 30 min per parent issue.
+auto_post_program_status() {
+    [[ "${AUTO_PROGRAM_UPDATES:-false}" == "true" ]] || return 0
+
+    local repo="$1" number="$2" event_type="$3"
+    local throttle_dir="$SCRIPT_DIR/state/program-throttle"
+    mkdir -p "$throttle_dir"
+
+    # Find parent issue from state file
+    local parent_number=""
+    for state_file in "$ITEM_STATE_DIR"/*"_${number}".json; do
+        [[ -f "$state_file" ]] || continue
+        parent_number=$(jq -r '.parent_issue // empty' "$state_file" 2>/dev/null)
+        [[ -n "$parent_number" ]] && break
+    done
+    [[ -z "$parent_number" ]] && return 0
+
+    # Throttle check (30 min)
+    local throttle_key="${repo//\//-}_${parent_number}"
+    local throttle_file="$throttle_dir/$throttle_key"
+    if [[ -f "$throttle_file" ]]; then
+        local last_post now_epoch
+        last_post=$(cat "$throttle_file" 2>/dev/null || echo "0")
+        now_epoch=$(date +%s)
+        (( now_epoch - last_post < 1800 )) && return 0
+    fi
+
+    # Post update
+    if "$SCRIPT_DIR/bin/zapat" program "$parent_number" --repo "$repo" --post 2>/dev/null; then
+        date +%s > "$throttle_file"
+        log_info "Auto-posted program status for parent #${parent_number} (triggered by #${number} ${event_type})"
+    fi
+}
+
 # --- Process Repos (per project) ---
 TOTAL_PRS=0
 TOTAL_ISSUES=0
+TOTAL_ITEMS_FOUND=0
 DISPATCH_COUNT=0
 MAX_DISPATCH=${MAX_DISPATCH_PER_CYCLE:-20}
+BACKLOG_WARNING_THRESHOLD=${BACKLOG_WARNING_THRESHOLD:-30}
 
 # Check if we've hit the per-cycle dispatch cap
 DISPATCH_LIMIT_LOGGED=false
@@ -325,7 +416,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
         # Skip if already processed (legacy file + item state)
         if grep -qF "$PR_KEY" "$PROCESSED_PRS"; then
-            continue
+            check_reopened_item "$PROCESSED_PRS" "$PR_KEY" "$repo" "pr" "$PR_NUM" "$project_slug" || continue
         fi
         if ! should_process_item "$repo" "pr" "$PR_NUM" "$project_slug"; then
             continue
@@ -338,6 +429,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         dispatch_limit_reached && continue
         log_info "Processing PR: $PR_KEY — $PR_TITLE (project: $project_slug)"
         create_item_state "$repo" "pr" "$PR_NUM" "pending" "$project_slug" || true
@@ -360,7 +452,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
         # Skip if already processed
         if grep -qF "$REVIEW_KEY" "$PROCESSED_PRS"; then
-            continue
+            check_reopened_item "$PROCESSED_PRS" "$REVIEW_KEY" "$repo" "pr" "$REVIEW_NUM" "$project_slug" || continue
         fi
         if ! should_process_item "$repo" "pr" "$REVIEW_NUM" "$project_slug"; then
             continue
@@ -373,6 +465,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         dispatch_limit_reached && continue
         log_info "Processing zapat-review: $REVIEW_KEY — $REVIEW_TITLE (project: $project_slug)"
         create_item_state "$repo" "pr" "$REVIEW_NUM" "pending" "$project_slug" || true
@@ -395,7 +488,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
         # Skip if already processed (legacy file + item state)
         if grep -qF "$ISSUE_KEY" "$PROCESSED_ISSUES"; then
-            continue
+            check_reopened_item "$PROCESSED_ISSUES" "$ISSUE_KEY" "$repo" "issue" "$ISSUE_NUM" "$project_slug" || continue
         fi
         if ! should_process_item "$repo" "issue" "$ISSUE_NUM" "$project_slug"; then
             continue
@@ -408,6 +501,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         dispatch_limit_reached && continue
         log_info "Processing issue: $ISSUE_KEY — $ISSUE_TITLE (project: $project_slug)"
         create_item_state "$repo" "issue" "$ISSUE_NUM" "pending" "$project_slug" || true
@@ -430,7 +524,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
         # Skip if already processed (legacy file + item state)
         if grep -qF "$WORK_KEY" "$PROCESSED_WORK"; then
-            continue
+            check_reopened_item "$PROCESSED_WORK" "$WORK_KEY" "$repo" "work" "$WORK_NUM" "$project_slug" || continue
         fi
         if ! should_process_item "$repo" "work" "$WORK_NUM" "$project_slug"; then
             continue
@@ -449,6 +543,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         dispatch_limit_reached && continue
         log_info "Processing agent-work: $WORK_KEY — $WORK_TITLE (project: $project_slug)"
         create_item_state "$repo" "work" "$WORK_NUM" "pending" "$project_slug" || true
@@ -471,7 +566,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
         # Skip if already processed (legacy file + item state)
         if grep -qF "$REWORK_KEY" "$PROCESSED_REWORK"; then
-            continue
+            check_reopened_item "$PROCESSED_REWORK" "$REWORK_KEY" "$repo" "rework" "$REWORK_NUM" "$project_slug" || continue
         fi
         if ! should_process_item "$repo" "rework" "$REWORK_NUM" "$project_slug"; then
             continue
@@ -484,6 +579,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         dispatch_limit_reached && continue
         log_info "Processing zapat-rework: $REWORK_KEY — $REWORK_TITLE (project: $project_slug)"
         create_item_state "$repo" "rework" "$REWORK_NUM" "pending" "$project_slug" || true
@@ -504,22 +600,103 @@ while IFS=$'\t' read -r repo local_path repo_type; do
         TEST_ASSIGNEES=$(echo "$TEST_JSON" | jq ".[$i].assignees")
         TEST_KEY="${repo}#test-pr${TEST_NUM}"
 
+        # Skip if already processed (dedup file + item state)
+        if grep -qF "$TEST_KEY" "$PROCESSED_TESTING"; then
+            check_reopened_item "$PROCESSED_TESTING" "$TEST_KEY" "$repo" "test" "$TEST_NUM" "$project_slug" || continue
+        fi
         if ! should_process_item "$repo" "test" "$TEST_NUM" "$project_slug"; then
             continue
         fi
 
         if ! should_process "$TEST_LABELS" "$TEST_ASSIGNEES"; then
             log_info "Skipping zapat-testing $TEST_KEY (governance: human-only or assigned)"
+            echo "$TEST_KEY" >> "$PROCESSED_TESTING"
             continue
         fi
 
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         dispatch_limit_reached && continue
         log_info "Processing zapat-testing: $TEST_KEY — $TEST_TITLE (project: $project_slug)"
         create_item_state "$repo" "test" "$TEST_NUM" "pending" "$project_slug" >/dev/null || true
         "$SCRIPT_DIR/triggers/on-test-pr.sh" "$repo" "$TEST_NUM" "" "$project_slug" &
+        echo "$TEST_KEY" >> "$PROCESSED_TESTING"
         TOTAL_PRS=$((TOTAL_PRS + 1))
         DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
     done
+
+    # --- PRs with zapat-visual label (visual verification) ---
+    if [[ "${VISUAL_VERIFY_ENABLED:-false}" == "true" ]]; then
+        VISUAL_JSON=$(gh_safe 'gh pr list --repo "'"$repo"'" --label "zapat-visual" --json number,title,labels,assignees --state open') || { RATE_LIMIT_LOW="hit"; continue; }
+
+        VISUAL_COUNT=$(echo "$VISUAL_JSON" | jq 'length')
+        for ((i=0; i<VISUAL_COUNT; i++)); do
+            VISUAL_NUM=$(echo "$VISUAL_JSON" | jq -r ".[$i].number")
+            VISUAL_TITLE=$(echo "$VISUAL_JSON" | jq -r ".[$i].title")
+            VISUAL_LABELS=$(echo "$VISUAL_JSON" | jq ".[$i].labels")
+            VISUAL_ASSIGNEES=$(echo "$VISUAL_JSON" | jq ".[$i].assignees")
+            VISUAL_KEY="${repo}#visual-pr${VISUAL_NUM}"
+
+            # Skip if already processed
+            if grep -qF "$VISUAL_KEY" "$PROCESSED_TESTING" 2>/dev/null; then
+                continue
+            fi
+            if ! should_process_item "$repo" "visual" "$VISUAL_NUM" "$project_slug"; then
+                continue
+            fi
+
+            if ! should_process "$VISUAL_LABELS" "$VISUAL_ASSIGNEES"; then
+                log_info "Skipping zapat-visual $VISUAL_KEY (governance: human-only or assigned)"
+                echo "$VISUAL_KEY" >> "$PROCESSED_TESTING"
+                continue
+            fi
+
+            TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
+            dispatch_limit_reached && continue
+            log_info "Processing zapat-visual: $VISUAL_KEY — $VISUAL_TITLE (project: $project_slug)"
+            create_item_state "$repo" "visual" "$VISUAL_NUM" "pending" "$project_slug" >/dev/null || true
+            "$SCRIPT_DIR/triggers/on-visual-verify.sh" "$repo" "$VISUAL_NUM" "" "$project_slug" &
+            echo "$VISUAL_KEY" >> "$PROCESSED_TESTING"
+            TOTAL_PRS=$((TOTAL_PRS + 1))
+            DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
+        done
+    fi
+
+    # --- PRs with zapat-ci-fix label (CI auto-fix) ---
+    if [[ "${CI_AUTOFIX_ENABLED:-false}" == "true" ]]; then
+        CI_FIX_JSON=$(gh_safe 'gh pr list --repo "'"$repo"'" --label "zapat-ci-fix" --json number,title,labels,assignees --state open') || { RATE_LIMIT_LOW="hit"; continue; }
+
+        CI_FIX_COUNT=$(echo "$CI_FIX_JSON" | jq 'length')
+        for ((i=0; i<CI_FIX_COUNT; i++)); do
+            CI_FIX_NUM=$(echo "$CI_FIX_JSON" | jq -r ".[$i].number")
+            CI_FIX_TITLE=$(echo "$CI_FIX_JSON" | jq -r ".[$i].title")
+            CI_FIX_LABELS=$(echo "$CI_FIX_JSON" | jq ".[$i].labels")
+            CI_FIX_ASSIGNEES=$(echo "$CI_FIX_JSON" | jq ".[$i].assignees")
+            CI_FIX_KEY="${repo}#ci-fix-pr${CI_FIX_NUM}"
+
+            # Skip if already processed
+            if grep -qF "$CI_FIX_KEY" "$PROCESSED_TESTING" 2>/dev/null; then
+                continue
+            fi
+            if ! should_process_item "$repo" "ci-fix" "$CI_FIX_NUM" "$project_slug"; then
+                continue
+            fi
+
+            if ! should_process "$CI_FIX_LABELS" "$CI_FIX_ASSIGNEES"; then
+                log_info "Skipping zapat-ci-fix $CI_FIX_KEY (governance: human-only or assigned)"
+                echo "$CI_FIX_KEY" >> "$PROCESSED_TESTING"
+                continue
+            fi
+
+            TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
+            dispatch_limit_reached && continue
+            log_info "Processing zapat-ci-fix: $CI_FIX_KEY — $CI_FIX_TITLE (project: $project_slug)"
+            create_item_state "$repo" "ci-fix" "$CI_FIX_NUM" "pending" "$project_slug" >/dev/null || true
+            "$SCRIPT_DIR/triggers/on-ci-fix.sh" "$repo" "$CI_FIX_NUM" "" "$project_slug" &
+            echo "$CI_FIX_KEY" >> "$PROCESSED_TESTING"
+            TOTAL_PRS=$((TOTAL_PRS + 1))
+            DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
+        done
+    fi
 
     # --- Issues with agent-write-tests label (test writing) ---
     WRITE_TESTS_JSON=$(gh_safe 'gh issue list --repo "'"$repo"'" --label "agent-write-tests" --json number,title,labels,assignees --state open') || { RATE_LIMIT_LOW="hit"; continue; }
@@ -534,7 +711,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
         # Skip if already processed (legacy file + item state)
         if grep -qF "$WT_KEY" "$PROCESSED_WRITE_TESTS"; then
-            continue
+            check_reopened_item "$PROCESSED_WRITE_TESTS" "$WT_KEY" "$repo" "write-tests" "$WT_NUM" "$project_slug" || continue
         fi
         if ! should_process_item "$repo" "write-tests" "$WT_NUM" "$project_slug"; then
             continue
@@ -547,6 +724,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         dispatch_limit_reached && continue
         log_info "Processing agent-write-tests: $WT_KEY — $WT_TITLE (project: $project_slug)"
         create_item_state "$repo" "write-tests" "$WT_NUM" "pending" "$project_slug" || true
@@ -569,7 +747,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
         # Skip if already processed (legacy file + item state)
         if grep -qF "$RESEARCH_KEY" "$PROCESSED_RESEARCH"; then
-            continue
+            check_reopened_item "$PROCESSED_RESEARCH" "$RESEARCH_KEY" "$repo" "research" "$RESEARCH_NUM" "$project_slug" || continue
         fi
         if ! should_process_item "$repo" "research" "$RESEARCH_NUM" "$project_slug"; then
             continue
@@ -582,6 +760,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
         dispatch_limit_reached && continue
         log_info "Processing agent-research: $RESEARCH_KEY — $RESEARCH_TITLE (project: $project_slug)"
         create_item_state "$repo" "research" "$RESEARCH_NUM" "pending" "$project_slug" || true
@@ -611,13 +790,22 @@ while IFS=$'\t' read -r repo local_path repo_type; do
 
             # Skip if already seen by auto-triage
             if grep -qF "$AT_KEY" "$PROCESSED_AUTO_TRIAGE"; then
-                continue
+                check_reopened_item "$PROCESSED_AUTO_TRIAGE" "$AT_KEY" "$repo" "issue" "$AT_NUM" "$project_slug" || continue
             fi
 
             # Skip if already processed by any other pipeline path
             if grep -qF "${repo}#${AT_NUM}" "$PROCESSED_ISSUES" "$PROCESSED_WORK" "$PROCESSED_RESEARCH" "$PROCESSED_WRITE_TESTS" 2>/dev/null; then
-                echo "$AT_KEY" >> "$PROCESSED_AUTO_TRIAGE"
-                continue
+                if reset_completed_item "$repo" "issue" "$AT_NUM" "$project_slug"; then
+                    # Reopened: remove from all processed files
+                    remove_from_processed_file "$PROCESSED_ISSUES" "${repo}#${AT_NUM}"
+                    remove_from_processed_file "$PROCESSED_WORK" "${repo}#${AT_NUM}"
+                    remove_from_processed_file "$PROCESSED_RESEARCH" "${repo}#${AT_NUM}"
+                    remove_from_processed_file "$PROCESSED_WRITE_TESTS" "${repo}#${AT_NUM}"
+                    log_info "Reopened item detected: ${repo}#${AT_NUM} — cleared from all processed files"
+                else
+                    echo "$AT_KEY" >> "$PROCESSED_AUTO_TRIAGE"
+                    continue
+                fi
             fi
 
             # Skip if issue has ANY Zapat label (already managed)
@@ -642,6 +830,7 @@ while IFS=$'\t' read -r repo local_path repo_type; do
                 continue
             fi
 
+            TOTAL_ITEMS_FOUND=$((TOTAL_ITEMS_FOUND + 1))
             dispatch_limit_reached && continue
             log_info "Auto-triage: new issue $AT_KEY — $AT_TITLE (project: $project_slug)"
             create_item_state "$repo" "issue" "$AT_NUM" "pending" "$project_slug" || true
@@ -674,9 +863,16 @@ while IFS=$'\t' read -r repo local_path repo_type; do
             continue
         fi
 
+        # Dedup: skip if already auto-rework-processed this cycle
+        AUTO_REWORK_KEY="${repo}#autorework-pr${AGENT_PR_NUM}"
+        if grep -qF "$AUTO_REWORK_KEY" "$PROCESSED_AUTO_REWORK"; then
+            continue
+        fi
+
         log_info "Auto-rework detected: PR #${AGENT_PR_NUM} on branch ${AGENT_PR_BRANCH} has changes requested"
         gh pr edit "$AGENT_PR_NUM" --repo "$repo" \
             --add-label "zapat-rework" 2>/dev/null || log_warn "Failed to add zapat-rework label to PR #${AGENT_PR_NUM}"
+        echo "$AUTO_REWORK_KEY" >> "$PROCESSED_AUTO_REWORK"
     done
 
     # --- Auto-Merge Gate ---
@@ -764,12 +960,18 @@ It will be auto-merged in **${DELAY_HOURS} hours** unless a \`hold\` label is ad
                     HAS_HIGH_COMMENT=$(echo "$PR_COMMENTS" | grep -c "high-risk-review-needed" 2>/dev/null || echo "0")
                     if [[ "$HAS_HIGH_COMMENT" -lt 1 ]]; then
                         RISK_REASONS=$(echo "$RISK_JSON" | jq -r '.reasons | join(", ")' 2>/dev/null || echo "See risk analysis")
-                        gh pr comment "$MERGE_PR_NUM" --repo "$repo" --body "<!-- high-risk-review-needed -->
+                        RISK_SCORE=$(echo "$RISK_JSON" | jq -r '.score // "?"' 2>/dev/null || echo "?")
+                        risk_detail="<!-- high-risk-review-needed -->
+**Risk score:** ${RISK_SCORE} (threshold: 8)
+**Risk factors:** ${RISK_REASONS}"
+                        post_handoff_comment "$repo" "$MERGE_PR_NUM" "high_risk" "$risk_detail" || {
+                            gh pr comment "$MERGE_PR_NUM" --repo "$repo" --body "<!-- high-risk-review-needed -->
 This PR is classified as **high risk** and requires human review before merging.
 
 **Risk factors**: ${RISK_REASONS}
 
 Please review and merge manually." 2>/dev/null || true
+                        }
                         "$SCRIPT_DIR/bin/notify.sh" \
                             --slack \
                             --message "High-risk PR #${MERGE_PR_NUM} in ${repo} needs human review.\nhttps://github.com/${repo}/pull/${MERGE_PR_NUM}" \
@@ -836,6 +1038,17 @@ done < <(read_projects)
 # --- Update Mention Poll Timestamp ---
 if [[ "${ZAPAT_MENTION_ENABLED:-true}" == "true" ]]; then
     date -u '+%Y-%m-%dT%H:%M:%SZ' > "$LAST_MENTION_POLL"
+fi
+
+# --- Backlog Flood Detection ---
+if [[ $TOTAL_ITEMS_FOUND -gt $BACKLOG_WARNING_THRESHOLD ]]; then
+    log_warn "Flood detection: Found $TOTAL_ITEMS_FOUND items across all repos in this cycle (threshold: $BACKLOG_WARNING_THRESHOLD). This may indicate a first-boot scenario or label misconfiguration. Items are capped at MAX_DISPATCH_PER_CYCLE=$MAX_DISPATCH per cycle."
+    _log_structured "warn" "Backlog flood detected" "\"total_items_found\":$TOTAL_ITEMS_FOUND,\"threshold\":$BACKLOG_WARNING_THRESHOLD,\"dispatched\":$DISPATCH_COUNT"
+    "$SCRIPT_DIR/bin/notify.sh" \
+        --slack \
+        --message "Flood detection: Found $TOTAL_ITEMS_FOUND items in a single poll cycle (threshold: $BACKLOG_WARNING_THRESHOLD). Dispatched $DISPATCH_COUNT/$MAX_DISPATCH. This may indicate a first-boot scenario or label misconfiguration. If first boot, this self-resolves over subsequent cycles (batched at $MAX_DISPATCH/cycle). If unexpected, check labels with: bin/zapat health" \
+        --job-name "flood-detection" \
+        --status warning 2>/dev/null || true
 fi
 
 # --- Retry Sweep ---

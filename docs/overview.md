@@ -6,6 +6,8 @@ Label a GitHub issue. Walk away. Come back to a tested, reviewed, merge-ready PR
 
 ---
 
+> **Detailed architecture reference:** See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the complete system design — pipeline flow diagrams, state machine, label protocol, concurrency model, prompt architecture, risk scoring, and extension points.
+
 ## How It Works
 
 ```

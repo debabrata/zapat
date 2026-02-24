@@ -20,6 +20,7 @@ If already configured, run `/pipeline-check` or `/zapat:pipeline-check` to verif
 | `agent-write-tests` | Write tests for the specified code |
 | `hold` | Block auto-merge on this PR |
 | `human-only` | Pipeline should not touch this |
+| `agent-full-review` | Force full team review regardless of complexity |
 
 Status labels are managed automatically by the pipeline:
 
@@ -30,6 +31,8 @@ Status labels are managed automatically by the pipeline:
 | `zapat-review` | Code review pending |
 | `zapat-testing` | Tests running |
 | `zapat-rework` | Addressing review feedback |
+| `zapat-visual` | Visual verification in progress |
+| `zapat-ci-fix` | CI auto-fix in progress |
 | `needs-rebase` | Auto-rebase failed due to conflicts (manual resolution needed) |
 
 ### CLI Commands
@@ -61,6 +64,8 @@ Status labels are managed automatically by the pipeline:
 | `/zapat:pipeline-check` | Quick health check with plain-language results |
 
 ## Architecture
+
+> **Detailed architecture reference:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the single source of truth for system design — pipeline flow, state machine, label protocol, concurrency, prompt architecture, risk scoring, and extension points.
 
 ```
 GitHub Issue (labeled) --> Poller (every 2 min) --> Trigger Script --> Claude Code Agent Team --> PR --> Review Agent Team --> Auto-Merge Gate
@@ -173,13 +178,19 @@ Edit `config/repos.conf` or run the `/add-repo` skill. Format: `owner/repo<TAB>l
 3. Run `cp agents/*.md ~/.claude/agents/` to deploy.
 
 ### Modifying prompts
-Edit files in `prompts/`. Templates use `{{PLACEHOLDER}}` syntax that gets substituted at runtime by `lib/common.sh`. Available placeholders include `{{REPO}}`, `{{ISSUE_NUMBER}}`, `{{PR_NUMBER}}`, `{{BRANCH}}`, and others.
+Edit files in `prompts/`. Templates use `{{PLACEHOLDER}}` syntax that gets substituted at runtime by `lib/common.sh`. Available placeholders include `{{REPO}}`, `{{ISSUE_NUMBER}}`, `{{PR_NUMBER}}`, `{{BRANCH}}`, and others. Common repository map and safety rules are auto-appended from `prompts/_shared-footer.txt`.
 
 ### Enabling compliance mode
 Set `ENABLE_COMPLIANCE_MODE=true` in `.env` and add a compliance agent persona:
 1. Create `agents/compliance-advisor.md` with domain-specific rules.
 2. Add `compliance=compliance-advisor` to `config/agents.conf`.
 3. The pipeline will consult the compliance persona during reviews and before auto-merge.
+
+### Prompt Caching
+Claude Code automatically caches static system prompt prefixes (CLAUDE.md + agent personas) between turns. The shared footer (`prompts/_shared-footer.txt`) improves cacheability by ensuring common content is consistent across templates. No additional configuration is needed -- caching is handled by the Claude Code runtime. No `cache_creation_input_tokens` metrics are currently tracked in logs.
+
+### Maintaining the architecture doc
+When modifying the pipeline (new triggers, labels, state transitions, CLI commands), update `docs/ARCHITECTURE.md`. Run `npm test` to verify consistency.
 
 ### Shared agent memory
 Agents share knowledge via files in `~/.claude/agent-memory/_shared/`:

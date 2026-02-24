@@ -21,11 +21,11 @@ You are the engineering lead. You MUST create an Agent Team to research and anal
    - **product-manager** (`subagent_type: {{PRODUCT_AGENT}}`): Feature prioritization, roadmap alignment, cross-team trade-offs. Analyzes which recommendations are most impactful and how they fit the product strategy.
 
    **Include based on issue content:**
-   - **engineer** — Use `subagent_type: {{BUILDER_AGENT}}` (select based on the repository type from {{REPO_MAP}}).
+   - **engineer** — Use `subagent_type: {{BUILDER_AGENT}}` (select based on the repository type).
      Include when the issue requires technical feasibility assessment or architecture review.
    - **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Security implications. Include when the issue touches auth or data flows.
 
-   {{COMPLIANCE_RULES}}
+   **Model Selection:** Spawn each sub-agent teammate using `model: "{{SUBAGENT_MODEL}}"` in the Task tool call. The lead agent (you) already runs on the model specified by `CLAUDE_MODEL`.
 
    Spawn 3-5 teammates. Not every issue needs all roles. Choose based on the issue content.
 
@@ -79,50 +79,29 @@ For each actionable recommendation, specify:
 
    Also create a tracking comment on the original issue listing the feature branch and all sub-issues.
 
-   **CRITICAL — Interface Contracts for Multi-Service Features:**
-   If the sub-issues produce services/classes that call each other, you MUST define a shared interface contract BEFORE creating the sub-issues. This prevents API mismatches when agents implement in parallel.
-
-   For each service boundary, write the exact contract:
+   **Interface Contracts:** Define shared contracts for sub-issues that interact. Include in EVERY sub-issue body:
    ```
    ## Interface Contract
-
    ### ServiceA (implemented by issue #X)
    - `func methodName(paramName: ParamType) -> ReturnType`
    - `var propertyName: PropertyType`
-   - `delegate/callback: didProduceResult(ResultType)`
-
+   - `delegate/callback: didComplete(ResultType)`
    ### ServiceB calls ServiceA via:
    - `serviceA.methodName(param)` — called when [trigger]
-   - Reads `serviceA.propertyName` — used for [purpose]
    ```
 
-   Include the FULL interface contract in EVERY sub-issue body. Every agent must implement against the same contract.
-
-   **CRITICAL — Backend API Specs:**
-   If any service talks to a backend API endpoint, you MUST read the actual backend code to determine the exact API contract (method, URL, headers, body format, auth). Include the spec in the sub-issue body:
+   **Backend API Specs:** Read actual backend code for exact API contracts. Include in sub-issue body:
    ```
    ## Backend API Spec
    POST /v3/endpoint/path
-   Headers: X-Custom-Header, Content-Type: application/json
+   Headers: Content-Type: application/json
    Body: { "field": "type" }
    Response: { "field": "type" }
    Auth: Bearer token
    ```
-   NEVER let agents infer the backend contract from other code. They will pattern-match to the wrong endpoint.
+   NEVER let agents infer the backend contract from other code.
 
-   Backend code location: Consult {{REPO_MAP}} for the backend repository path.
-
-   **CRITICAL — Dependency Ordering:**
-   If sub-issues depend on each other (e.g., integration depends on services being built first), you MUST specify dependencies. In the dependent issue body, include:
-   ```
-   **Blocked By:** #X, #Y
-   ```
-   The pipeline will not start a blocked issue until its dependencies are closed. This ensures:
-   - Service implementations finish before integration starts
-   - The integration agent sees the ACTUAL code, not imagined APIs
-   - No parallel modification of the same functions
-
-   Typical ordering for multi-service features:
+   **Dependency Ordering:** Specify `**Blocked By:** #X, #Y` in dependent sub-issues. Typical order:
    1. Foundation services (no dependencies) — run in parallel
    2. Integration issue — blocked by all service issues
    3. Security review — blocked by integration
@@ -137,6 +116,15 @@ For each actionable recommendation, specify:
    gh issue comment {{ISSUE_NUMBER}} --repo {{REPO}} --body "YOUR_RESEARCH_REPORT"
    ```
 
+   After creating all sub-issues and posting the research report, post a
+   machine-readable tracking comment for automated program tracking:
+   ```
+   gh issue comment {{ISSUE_NUMBER}} --repo {{REPO}} --body "<!-- zapat-sub-issues: X,Y,Z -->"
+   ```
+   Replace X,Y,Z with the comma-separated issue numbers of ALL sub-issues
+   you created. This MUST be a separate comment (not inside the research
+   report) so the pipeline can discover sub-issues programmatically.
+
 6. **Close the original issue** if it has been fully superseded by more specific follow-up issues:
    ```
    gh issue close {{ISSUE_NUMBER}} --repo {{REPO}} --comment "Superseded by follow-up issues: #X, #Y, #Z"
@@ -145,11 +133,7 @@ For each actionable recommendation, specify:
 
 7. **Shut down the team** when done.
 
-## Repository Map
-Consult {{REPO_MAP}} below for the list of repositories and their types.
-
-## Safety Rules
-{{COMPLIANCE_RULES}}
+### Safety Notes
 - All teammates are read-only — no code changes, only analysis and issue creation
 - Keep the research report concise and actionable
 - Do NOT create `agent-research` sub-issues unless the research question is genuinely separate from this one

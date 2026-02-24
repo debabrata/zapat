@@ -31,7 +31,7 @@ log_info "Starting write-tests for issue #${ISSUE_NUMBER} in ${REPO} (project: $
 SLOT_DIR="$SCRIPT_DIR/state/agent-work-slots"
 MAX_CONCURRENT=${MAX_CONCURRENT_WORK:-10}
 ITEM_STATE_FILE=$(create_item_state "$REPO" "write-tests" "$ISSUE_NUMBER" "running" "$PROJECT_SLUG") || true
-if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT"; then
+if ! acquire_slot "$SLOT_DIR" "$MAX_CONCURRENT" "write-tests" "$REPO" "$ISSUE_NUMBER"; then
     log_info "At capacity ($MAX_CONCURRENT concurrent sessions), skipping write-tests #${ISSUE_NUMBER}"
     [[ -n "${ITEM_STATE_FILE:-}" && -f "${ITEM_STATE_FILE:-}" ]] && update_item_state "$ITEM_STATE_FILE" "capacity_rejected"
     exit 0
@@ -53,9 +53,11 @@ ISSUE_LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | join(", ")' 2>/dev
 
 # --- Resolve Repo Local Path ---
 REPO_PATH=""
-while IFS=$'\t' read -r conf_repo conf_path _conf_type; do
+REPO_TYPE=""
+while IFS=$'\t' read -r conf_repo conf_path conf_type; do
     if [[ "$conf_repo" == "$REPO" ]]; then
         REPO_PATH="$conf_path"
+        REPO_TYPE="$conf_type"
         break
     fi
 done < <(read_repos)
@@ -109,13 +111,17 @@ git worktree add "$WORKTREE_DIR" -b "$BRANCH_NAME" "origin/${DEFAULT_BRANCH}" 2>
 
 log_info "Worktree created at $WORKTREE_DIR on branch $BRANCH_NAME"
 
+# --- Copy slim CLAUDE.md into worktree ---
+cp "$SCRIPT_DIR/CLAUDE-pipeline.md" "$WORKTREE_DIR/CLAUDE.md"
+
 # --- Build Prompt ---
 FINAL_PROMPT=$(substitute_prompt "$SCRIPT_DIR/prompts/write-tests.txt" \
     "REPO=$REPO" \
     "ISSUE_NUMBER=$ISSUE_NUMBER" \
     "ISSUE_TITLE=$ISSUE_TITLE" \
     "ISSUE_BODY=$ISSUE_BODY" \
-    "ISSUE_LABELS=$ISSUE_LABELS")
+    "ISSUE_LABELS=$ISSUE_LABELS" \
+    "REPO_TYPE=$REPO_TYPE")
 
 # Write prompt to temp file (avoids tmux send-keys escaping issues)
 PROMPT_FILE=$(mktemp)

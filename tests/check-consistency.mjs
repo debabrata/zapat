@@ -267,6 +267,7 @@ console.log('\n1e. Prompt Placeholder Verification');
 const autoInjected = new Set([
   'REPO_MAP', 'BUILDER_AGENT', 'SECURITY_AGENT', 'PRODUCT_AGENT', 'UX_AGENT',
   'ORG_NAME', 'COMPLIANCE_RULES', 'PROJECT_CONTEXT', 'PROJECT_NAME',
+  'SUBAGENT_MODEL'
 ]);
 
 // Map of prompt template -> trigger script
@@ -278,7 +279,19 @@ const promptToTrigger = {
   'prompts/research-issue.txt': 'triggers/on-research-issue.sh',
   'prompts/write-tests.txt': 'triggers/on-write-tests.sh',
   'prompts/test-pr.txt': 'triggers/on-test-pr.sh',
+  'prompts/ci-fix.txt': 'triggers/on-ci-fix.sh',
+  'prompts/visual-verify.txt': 'triggers/on-visual-verify.sh',
 };
+
+// Include placeholders from the shared footer (appended by substitute_prompt)
+const sharedFooterPath = 'prompts/_shared-footer.txt';
+const sharedFooterPlaceholders = new Set();
+if (fileExists(sharedFooterPath)) {
+  const footerContent = readFile(sharedFooterPath);
+  for (const match of footerContent.matchAll(/\{\{(\w+)\}\}/g)) {
+    sharedFooterPlaceholders.add(match[1]);
+  }
+}
 
 for (const [promptPath, triggerPath] of Object.entries(promptToTrigger)) {
   if (!fileExists(promptPath) || !fileExists(triggerPath)) continue;
@@ -286,10 +299,13 @@ for (const [promptPath, triggerPath] of Object.entries(promptToTrigger)) {
   const promptContent = readFile(promptPath);
   const triggerContent = readFile(triggerPath);
 
-  // Extract all {{PLACEHOLDER}} tokens from the prompt
+  // Extract all {{PLACEHOLDER}} tokens from the prompt + shared footer
   const placeholders = new Set();
   for (const match of promptContent.matchAll(/\{\{(\w+)\}\}/g)) {
     placeholders.add(match[1]);
+  }
+  for (const ph of sharedFooterPlaceholders) {
+    placeholders.add(ph);
   }
 
   // Extract variables passed via substitute_prompt "KEY=..." in the trigger.
@@ -332,7 +348,7 @@ const userFacingLabels = [
 ];
 const statusLabels = [
   'zapat-triaging', 'zapat-implementing', 'zapat-review', 'zapat-testing',
-  'zapat-rework', 'needs-rebase',
+  'zapat-rework', 'zapat-visual', 'zapat-ci-fix', 'needs-rebase',
 ];
 
 const claudeMd = readFile('CLAUDE.md');
@@ -382,6 +398,87 @@ for (const fn of obsoleteFunctions) {
 check('lib/common.sh defines substitute_prompt',
   commonSh.includes('substitute_prompt()'),
   'substitute_prompt function not found in lib/common.sh');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2a. Architecture Doc — Trigger Coverage
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n2a. Architecture Doc — Trigger Coverage');
+
+const archDoc = fileExists('docs/ARCHITECTURE.md') ? readFile('docs/ARCHITECTURE.md') : null;
+
+if (archDoc) {
+  // Every .sh file in triggers/ should be mentioned in ARCHITECTURE.md
+  const triggerDir = join(ROOT, 'triggers');
+  const { readdirSync } = await import('fs');
+  const triggerFiles = readdirSync(triggerDir).filter(f => f.endsWith('.sh'));
+
+  for (const triggerFile of triggerFiles) {
+    check(`ARCHITECTURE.md references trigger "${triggerFile}"`,
+      archDoc.includes(triggerFile),
+      `Trigger "${triggerFile}" exists in triggers/ but is not mentioned in docs/ARCHITECTURE.md`);
+  }
+} else {
+  check('docs/ARCHITECTURE.md exists', false, 'File not found');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2b. Architecture Doc — Label Coverage
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n2b. Architecture Doc — Label Coverage');
+
+if (archDoc) {
+  // Every label in setup-labels.sh should appear in ARCHITECTURE.md
+  const pipelineLabelsInSetup = [...canonicalLabels].filter(l =>
+    l.startsWith('zapat-') || l.startsWith('agent') || ['hold', 'human-only', 'needs-rebase'].includes(l)
+  );
+
+  for (const label of pipelineLabelsInSetup) {
+    check(`ARCHITECTURE.md documents label "${label}"`,
+      archDoc.includes(`\`${label}\``) || archDoc.includes(label),
+      `Label "${label}" from setup-labels.sh not found in docs/ARCHITECTURE.md`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2c. Architecture Doc — Directory Coverage
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n2c. Architecture Doc — Directory Coverage');
+
+if (archDoc) {
+  // Every top-level directory referenced in Component Reference should exist
+  const archDirRefs = [];
+  for (const match of archDoc.matchAll(/### `([a-z]+\/)`/g)) {
+    archDirRefs.push(match[1].replace(/\/$/, ''));
+  }
+
+  for (const dirPath of archDirRefs) {
+    check(`ARCHITECTURE.md directory "${dirPath}/" exists`,
+      fileExists(dirPath),
+      `Directory "${dirPath}" referenced in ARCHITECTURE.md Component Reference but doesn't exist`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2d. Architecture Doc — .env.example Variable Coverage
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n2d. Architecture Doc — .env.example Variable Coverage');
+
+if (archDoc) {
+  // Extract non-comment variable names from .env.example
+  const envVars = [];
+  for (const line of envExample.split('\n')) {
+    const match = line.match(/^([A-Z][A-Z0-9_]+)=/);
+    if (match) envVars.push(match[1]);
+  }
+
+  // Each env var should be documented somewhere (architecture doc, customization doc, or CLAUDE.md)
+  const allDocs = archDoc + '\n' + claudeMd + '\n' + (fileExists('docs/customization.md') ? readFile('docs/customization.md') : '');
+  for (const envVar of envVars) {
+    check(`.env.example var "${envVar}" is documented`,
+      allDocs.includes(envVar),
+      `Variable "${envVar}" from .env.example not found in ARCHITECTURE.md, CLAUDE.md, or customization.md`);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Summary

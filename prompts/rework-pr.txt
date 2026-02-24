@@ -1,11 +1,10 @@
-You are the engineering lead. You MUST create an Agent Team to address review feedback on this PR. Do NOT attempt to do this alone.
-
-**CRITICAL: Your FIRST action must be to call the `TeamCreate` tool to create a team. Then use the `Task` tool to spawn each teammate. Do NOT skip team creation.**
+{{TASK_ASSESSMENT}}
 
 ## PR Details
 - **Repository**: {{REPO}}
 - **PR #{{PR_NUMBER}}**: {{PR_TITLE}}
 - **Branch**: {{PR_BRANCH}}
+- **Complexity**: {{COMPLEXITY}}
 
 ## Original PR Description
 {{PR_BODY}}
@@ -19,37 +18,34 @@ You are the engineering lead. You MUST create an Agent Team to address review fe
 ## Project Context
 {{PROJECT_CONTEXT}}
 
-## Instructions
+## Workflow
 
-1. **IMMEDIATELY create an Agent Team** by calling the `TeamCreate` tool, then spawn each teammate using the `Task` tool with the exact `subagent_type` specified below. These are richly-defined expert personas (15-20KB each), not generic agents.
+If you are spawning a team, your **FIRST action** must be to call the `TeamCreate` tool, then use the `Task` tool to spawn each teammate. Only skip team creation if the feedback is confirmed style-nits-only with no blocking issues.
 
-   - **builder** — Use `subagent_type: {{BUILDER_AGENT}}` (select based on the repository type from {{REPO_MAP}}).
-     Addresses ALL review feedback by making code changes. This is the only teammate that writes code.
+1. **Analyze Feedback**:
+   Read all review feedback carefully. Classify each piece using the Feedback Triage Guide below. Announce your classification and team decision before proceeding.
 
-   - **security-reviewer** (`subagent_type: {{SECURITY_AGENT}}`): Re-reviews all changes for security vulnerabilities. Validates that security-related feedback was addressed correctly.
-
-   - **product-manager** (`subagent_type: {{PRODUCT_AGENT}}`): Verifies that the reworked changes still meet the original requirements. Ensures feedback was addressed without scope creep or regression.
-
-2. **Team workflow**:
-
-   **Phase 1 — Blocking Issues (must fix):**
-   - Builder: Read all review feedback carefully. Identify blocking issues — things marked as "blocking", "must fix", "required", or that point out bugs, security issues, or correctness problems.
-   - Address ALL blocking issues first.
+2. **Phase 1 — Blocking Issues (must fix):**
+   - Address ALL blocking issues first — things marked as "blocking", "must fix", "required", or that point out bugs, security issues, or correctness problems.
    - Commit with message: `fix: address blocking review feedback on PR #{{PR_NUMBER}}`
    - Push to the existing branch. Do NOT force-push or rebase — add commits on top.
 
-   **Phase 2 — Suggestions & Improvements (should fix):**
-   - Builder: Now address ALL remaining feedback — suggestions, improvements, refactoring ideas, naming changes, documentation additions, test suggestions, and "nice to have" items.
+3. **Phase 2 — Suggestions & Improvements (should fix):**
+   - Address ALL remaining feedback — suggestions, improvements, refactoring ideas, naming changes, documentation additions, test suggestions, and "nice to have" items.
    - Treat suggestions as actionable work, not optional. If a reviewer suggested it, implement it unless it contradicts another reviewer's feedback or violates safety rules.
    - Commit SEPARATELY from blocking fixes with message: `refactor: implement review suggestions on PR #{{PR_NUMBER}}`
    - This separate commit allows reverting suggestions independently if needed.
 
-   **Phase 3 — Review:**
-   - Security reviewer: After builder pushes both commits, verify all security-related feedback was correctly addressed. Check that new commits didn't introduce new issues.
-   - Product manager: After builder pushes, verify the original acceptance criteria are still met and no regressions were introduced. Confirm both blocking issues AND suggestions were addressed.
+4. **Phase 2.5 — Run Tests Before Pushing:**
+   - Run the project's test suite (`npm test`, `bats tests/`, `pytest`, etc.) BEFORE pushing.
+   - If tests fail, fix the failures before committing and pushing. This prevents unnecessary test→rework ping-pong.
+
+5. **Phase 3 — Review** (skip if working solo):
+   - If you spawned a security reviewer: After builder pushes both commits, verify all security-related feedback was correctly addressed. Check that new commits didn't introduce new issues.
+   - If you spawned a product manager: After builder pushes, verify the original acceptance criteria are still met and no regressions were introduced. Confirm both blocking issues AND suggestions were addressed.
    - All send their assessment to you (the lead).
 
-3. **After all reviewers confirm**, shut down the team.
+6. **Shut down the team** when done (skip if working solo).
 
 ## Feedback Triage Guide
 
@@ -66,11 +62,6 @@ When in doubt, implement it. It's better to over-address feedback than to leave 
 
 **If the review flags missing tests as blocking**: Write the required unit/integration tests. Set up test infrastructure if needed — detect the stack (package.json → Jest/Vitest, .xcodeproj → XCTest), install devDependencies, create config files, and for .mjs files configure Jest ESM with `NODE_OPTIONS=--experimental-vm-modules`. Mock external dependencies, never make real API calls, and use fictional test data.
 
-## Repository Map
-Consult {{REPO_MAP}} below for the list of repositories and their types.
-
-## Safety Rules
-- NEVER commit secrets, API keys, or credentials
+### Safety Notes
 - NEVER force-push or rebase the branch
 - Keep changes focused on the review feedback — no unrelated changes
-{{COMPLIANCE_RULES}}
